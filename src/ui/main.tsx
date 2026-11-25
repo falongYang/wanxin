@@ -11,12 +11,17 @@ type Message = {
   sourceCardId?: string | null
   status: 'complete' | 'pending' | 'failed'
 }
-type Submission = { requestId: string; text: string; sourceCardId?: string | null }
+type Submission = { requestId: string; text: string; sourceCardId?: string | null; queuedIds?: string[] }
+type QueuedMessage = { id: string; text: string }
 type Card = { id: string; sourceMessageId: string; title: string; body: string; createdAt: string; sourceContent?: string }
 type CardDraft = Pick<Card, 'sourceMessageId' | 'title' | 'body' | 'createdAt'> & { id?: string; sourceContent: string }
 
 class ApiError extends Error {
   constructor(readonly status: number, message: string) { super(message) }
+}
+
+function newRequestId() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
 const suggestions = [
@@ -38,10 +43,65 @@ async function api<T>(path: string, data?: unknown, method = data === undefined 
   return response.json() as Promise<T>
 }
 
+type City = { id: number; label: string; latitude: number; longitude: number }
+
+function Weather({ city, selectCity }: { city: City | null; selectCity: (city: City | null) => void }) {
+  const [name, setName] = useState('')
+  const [cities, setCities] = useState<City[]>([])
+  const [reading, setReading] = useState<{ cityId: number; temperature: number } | null>(null)
+  const [searching, setSearching] = useState(false)
+
+  useEffect(() => {
+    if (!city) return
+    let active = true
+    const params = new URLSearchParams({ latitude: String(city.latitude), longitude: String(city.longitude) })
+    void api<{ temperature: number | null }>('weather/current?' + params).then(({ temperature }) => {
+      if (active && temperature !== null) setReading({ cityId: city.id, temperature })
+    }).catch(() => {})
+    return () => { active = false }
+  }, [city])
+
+  async function findCities(event: FormEvent) {
+    event.preventDefault()
+    setSearching(true)
+    setCities([])
+    try {
+      const result = await api<{ cities: City[] }>('weather/cities?' + new URLSearchParams({ name }))
+      setCities(result.cities)
+    } catch {
+      // Weather is optional. The foyer stays usable when its provider is offline.
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  return <details className="weather">
+    <summary>{city && reading?.cityId === city.id ? city.label + ' · ' + Math.round(reading.temperature) + '°C' : '选择天气城市'}</summary>
+    <form onSubmit={findCities}>
+      <input aria-label="城市名" value={name} maxLength={80} onChange={event => setName(event.target.value)} />
+      <button disabled={searching || name.trim().length < 2}>查询城市</button>
+    </form>
+    {cities.map(item => <button type="button" key={item.id} onClick={() => {
+      selectCity(item)
+      setCities([])
+    }}>{item.label}</button>)}
+    {city && <button type="button" onClick={() => { selectCity(null); setReading(null) }}>清除城市</button>}
+    {city && reading?.cityId === city.id && <small>数据来自 <a href="https://open-meteo.com/">Open-Meteo</a></small>}
+  </details>
+}
+
 function App() {
   const [screen, setScreen] = useState<'loading' | 'gate' | 'discover' | 'chat' | 'cards' | 'card'>('loading')
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
+  const [queue, setQueue] = useState<QueuedMessage[]>([])
+  const [editing, setEditing] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+  const [city, setCity] = useState<City | null>(null)
+  const [weatherAvailable, setWeatherAvailable] = useState(false)
+  const [theme, setTheme] = useState(() => new Date().getHours() >= 6 && new Date().getHours() < 12 ? 'morning' : 'night')
+  const foyer = useRef<HTMLDivElement>(null)
+  const [returnFromCards, setReturnFromCards] = useState<'chat' | 'discover'>('chat')
   const [failed, setFailed] = useState<Submission | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -56,7 +116,8 @@ function App() {
   async function load() {
     setError('')
     try {
-      const session = await api<{ threadId: string | null }>('session')
+      const session = await api<{ threadId: string | null; weatherAvailable?: boolean }>('session')
+      setWeatherAvailable(!!session.weatherAvailable)
       setScreen(session.threadId ? 'discover' : 'gate')
     } catch {
       setError('暂时无法连接，请重试。')
@@ -70,7 +131,8 @@ function App() {
     setBusy(true)
     setError('')
     try {
-      await api('session', { adult: true })
+      const session = await api<{ weatherAvailable?: boolean }>('session', { adult: true })
+      setWeatherAvailable(!!session.weatherAvailable)
       setScreen('discover')
     } catch {
       setError('暂时无法确认，请重试。')
@@ -88,6 +150,7 @@ function App() {
       if (failed) {
         const existing = restored.find(message => message.role === 'user' && message.requestId === failed.requestId)
         if (existing?.status === 'complete') {
+          setQueue(previous => previous.filter(item => !failed.queuedIds?.includes(item.id)))
           setFailed(null)
         } else if (!existing) {
           restored.push({ id: failed.requestId, role: 'user', content: failed.text, requestId: failed.requestId, status: 'failed' })
@@ -113,13 +176,15 @@ function App() {
       { id: submission.requestId, role: 'user', content: submission.text, requestId: submission.requestId, status: 'pending' },
     ])
     try {
-      const result = await api<{ messages: Message[] }>('messages', submission)
+      const { queuedIds, ...payload } = submission
+      const result = await api<{ messages: Message[] }>('messages', payload)
+      setQueue(previous => previous.filter(item => !queuedIds?.includes(item.id)))
       setMessages(result.messages)
       setReference(null)
     } catch (error) {
       if (submission.sourceCardId && error instanceof ApiError && error.status === 404) {
         setMessages(previous => previous.filter(message => message.id !== submission.requestId))
-        setDraft(submission.text)
+        if (!submission.queuedIds) setDraft(submission.text)
         setError(reference ? '经历卡已不可用，移除引用后可以继续发送。' : '经历卡已不可用，可以继续发送这条消息。')
         return
       }
@@ -137,10 +202,31 @@ function App() {
   function submit(event: FormEvent) {
     event.preventDefault()
     const text = draft.trim()
-    if (!text || Array.from(text).length > 1000 || failed || sending.current) return
+    if (!text || editing || Array.from(text).length > 1000 || failed || sending.current) return
     setDraft('')
     const sourceCardId = reference?.id
-    void send({ requestId: crypto.randomUUID(), text, sourceCardId })
+    void send({ requestId: newRequestId(), text, sourceCardId })
+  }
+
+  function enqueue() {
+    const text = draft.trim()
+    if (!text || busy || failed) return
+    const id = editing ?? newRequestId()
+    setQueue(previous => editing
+      ? previous.map(item => item.id === editing ? { id, text } : item)
+      : [...previous, { id, text }])
+    setEditing(null)
+    setDraft('')
+  }
+
+  function sendQueued(items: QueuedMessage[]) {
+    if (!items.length || busy || failed || editing) return
+    const text = items.map(item => item.text).join('\n')
+    if (Array.from(text).length > 1000) {
+      setError('合并后的消息超过 1000 字，请分开发送。')
+      return
+    }
+    void send({ requestId: newRequestId(), text, sourceCardId: reference?.id, queuedIds: items.map(item => item.id) })
   }
 
   async function cardAction(action: () => Promise<void>) {
@@ -199,29 +285,50 @@ function App() {
       setReference(null)
       setFailed(null)
       setDraft('')
+      setQueue([])
+      setEditing(null)
+      setSearch('')
+      setCity(null)
       setScreen('gate')
     })
   }
 
-  return <main className={screen === 'chat' ? 'shell chat' : 'shell discovery'}>
+  return <main data-theme={theme} className={screen === 'chat' ? 'shell chat' : 'shell discovery'}>
     {screen === 'chat' ? <>
       <header className="chat-header">
         <button type="button" disabled={busy} onClick={() => { setError(''); setScreen('discover') }}>返回</button>
         <div><strong>林舟</strong><small>AI 虚构角色</small></div>
-        <button type="button" disabled={busy} onClick={() => void cardAction(showCards)}>共同经历</button>
+        <button type="button" disabled={busy} onClick={() => { setReturnFromCards('chat'); void cardAction(showCards) }}>共同经历</button>
         <details className="chat-menu"><summary>菜单</summary>
           <button type="button" disabled={busy} onClick={() => void clearSession()}>清除会话</button>
         </details>
       </header>
       <section className="history" aria-label="聊天记录">
-        {messages.map(message => <div className={'bubble ' + message.role} key={message.id}>
+        <details className="history-drawer">
+          <summary>搜索聊天记录</summary>
+          <input type="search" aria-label="搜索聊天记录" value={search} onChange={event => setSearch(event.target.value)} />
+          {search.trim() && <ul>
+            {messages.filter(message => message.content.toLowerCase().includes(search.trim().toLowerCase())).map(message =>
+              <li key={message.id}><button onClick={event => {
+                event.currentTarget.closest('details')?.removeAttribute('open')
+                const target = document.getElementById('message-' + message.id)
+                target?.focus({ preventScroll: true })
+                target?.scrollIntoView({ block: 'center' })
+              }}>{message.content.slice(0, 100)}</button></li>
+            )}
+          </ul>}
+        </details>
+        {messages.map(message => <div id={'message-' + message.id} tabIndex={-1} className={'bubble ' + message.role} key={message.id}>
           {message.content}
           {message.status === 'complete' && <button type="button" disabled={busy}
             onClick={() => void cardAction(() => previewCard(message))}>做成经历卡</button>}
           {message.role === 'user' && message.status !== 'complete' && message.requestId && !busy &&
-            <button type="button" onClick={() => void send({ requestId: message.requestId!, text: message.content, sourceCardId: message.sourceCardId })}>重试</button>}
+            <button type="button" onClick={() => void send(failed?.requestId === message.requestId ? failed : { requestId: message.requestId!, text: message.content, sourceCardId: message.sourceCardId })}>重试</button>}
         </div>)}
-        {busy && <p className="activity" role="status">林舟正在回复…</p>}
+        {(busy || failed || messages.at(-1)?.role === 'assistant') && <details className="activity">
+          <summary role="status">{busy ? '正在处理' : failed ? '回复失败' : '回复已收到'}</summary>
+          <p>{busy ? '正在等待当前操作完成。' : failed ? '可以在原消息下重试。' : '林舟已回复当前消息。'}</p>
+        </details>}
         <div ref={bottom} />
       </section>
       <div className="composer">
@@ -234,22 +341,46 @@ function App() {
           <button type="button" disabled={busy} onClick={() => {
             setReference(null)
             if (failed?.sourceCardId) {
-              setDraft(failed.text)
+              if (!failed.queuedIds) setDraft(failed.text)
               setFailed(null)
             }
             setError('')
           }}>移除引用</button>
         </div>}
+        {queue.length > 0 && <section className="queue" aria-label="待发碎语">
+          <small>待发碎语 · 刷新页面会清空</small>
+          <ul>{queue.map(item => <li key={item.id}>
+            <span>{item.text}</span>
+            <button disabled={busy || !!failed || !!editing} onClick={() => sendQueued([item])}>发送</button>
+            <button disabled={busy || !!failed || !!editing || !!draft.trim()} onClick={() => {
+              setEditing(item.id)
+              setDraft(item.text)
+              input.current?.focus()
+            }}>编辑</button>
+            <button disabled={busy || !!failed || !!editing} onClick={() => setQueue(previous => previous.filter(entry => entry.id !== item.id))}>删除</button>
+          </li>)}</ul>
+          {queue.length > 1 && <button disabled={busy || !!failed || !!editing} onClick={() => sendQueued(queue)}>合并发送</button>}
+        </section>}
         <form onSubmit={submit}>
           <textarea ref={input} aria-label="消息" placeholder="说说你想聊的事" rows={2} value={draft}
+            onKeyDown={event => {
+              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+                event.preventDefault()
+                enqueue()
+              }
+            }}
             onChange={event => setDraft(Array.from(event.target.value).slice(0, 1000).join(''))} />
-          <button disabled={busy || !draft.trim() || !!failed} type="submit">发送</button>
+          <button disabled={busy || !draft.trim() || !!failed} type="button" onClick={enqueue}>{editing ? '保存' : '待发'}</button>
+          {editing
+            ? <button type="button" onClick={() => { setEditing(null); setDraft('') }}>取消</button>
+            : <button disabled={busy || !draft.trim() || !!failed} type="submit">发送</button>}
         </form>
       </div>
     </> : screen === 'cards' || screen === 'card' ? <section className="album">
       <header className="album-actions">
         <button disabled={busy} onClick={() => {
           if (screen === 'card' && cardDraft?.id) void cardAction(showCards)
+          else if (screen === 'cards' && returnFromCards === 'discover') setScreen('discover')
           else void openChat()
         }}>{screen === 'card' && !cardDraft?.id ? '取消预览' : '返回'}</button>
         <h1>{screen === 'cards' ? '共同经历' : cardDraft?.id ? '经历卡' : '预览经历卡'}</h1>
@@ -262,7 +393,7 @@ function App() {
             setCardDraft({ ...result.card, sourceContent: result.card.sourceContent ?? '' })
             setScreen('card')
           })}>
-          <strong>{card.title}</strong><small>{new Date(card.createdAt).toLocaleDateString('zh-CN')}</small>
+          <strong><span className="lantern" aria-hidden="true" />{card.title}</strong><small>{new Date(card.createdAt).toLocaleDateString('zh-CN')}</small>
           <span>{card.body}</span>
         </button>)}
       </>}
@@ -303,10 +434,29 @@ function App() {
         <button disabled={busy} onClick={() => void confirmAge()}>我已年满 18 岁</button>
       </section>}
       {screen === 'discover' && <section className="intro">
-        <p className="scene">深夜电台</p><h1>林舟</h1>
-        <small>AI 虚构角色</small><p>在海边值夜班的电台主播</p>
-        <blockquote>今晚的节目还没开始。你想先点一首歌，还是说说今天？</blockquote>
-        <button disabled={busy} onClick={() => void openChat()}>和林舟聊天</button>
+        <div className="foyer-heading">
+          <p>{new Date().getHours() < 6 ? '夜深了' : new Date().getHours() < 12 ? '早上好' : new Date().getHours() < 18 ? '下午好' : '晚上好'}</p>
+          <button onClick={() => setTheme(theme === 'night' ? 'morning' : 'night')}>{theme === 'night' ? '晨间主题' : '夜海主题'}</button>
+        </div>
+        {weatherAvailable && <Weather city={city} selectCity={setCity} />}
+        <div className="foyer" ref={foyer}>
+          <article>
+            <p className="scene">深夜电台</p><h1>林舟</h1>
+            <small>AI 虚构角色</small><p>在海边值夜班的电台主播</p>
+            <blockquote>今晚的节目还没开始。你想先点一首歌，还是说说今天？</blockquote>
+            <button disabled={busy} onClick={() => void openChat()}>和林舟聊天</button>
+          </article>
+          <article>
+            <h2>共同经历</h2><p>回看你和林舟留下的故事。</p>
+            <button disabled={busy} onClick={() => { setReturnFromCards('discover'); void cardAction(showCards) }}>打开共同经历</button>
+          </article>
+        </div>
+        <nav className="foyer-heading" aria-label="切换玄关卡片">
+          {['深夜电台', '共同经历'].map((label, index) => <button key={label} onClick={() => {
+            const panel = foyer.current
+            if (panel) panel.scrollLeft = panel.clientWidth * index
+          }}>{label}</button>)}
+        </nav>
       </section>}
       {error && <p role="alert">{error}</p>}
     </>}

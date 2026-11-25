@@ -18,7 +18,7 @@ async function readBody(request) {
   try { return JSON.parse(body) } catch { return null }
 }
 
-export function createApp(filename, reply, { secure = false, timeoutMs = 15000 } = {}) {
+export function createApp(filename, reply, { secure = false, timeoutMs = 15000, weather } = {}) {
   const db = new DatabaseSync(filename)
   db.exec(`
     PRAGMA foreign_keys = ON;
@@ -121,7 +121,7 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000 }
     const key = request.headers.cookie?.match(/(?:^|;\s*)wanxin=([a-f0-9-]{36})(?:;|$)/)?.[1]
     let threadId = key && findThread.get(key)?.id
     const route = request.method + ' ' + url.pathname
-    if (route === 'GET /api/session') return json(response, 200, { threadId: threadId || null, character: '林舟' })
+    if (route === 'GET /api/session') return json(response, 200, { threadId: threadId || null, character: '林舟', ...(weather && { weatherAvailable: true }) })
     if (route === 'POST /api/session') {
       if ((await readBody(request))?.adult !== true) return json(response, 400, { error: '请先确认成年' })
       if (!threadId) {
@@ -140,7 +140,23 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000 }
         }
         response.setHeader('Set-Cookie', 'wanxin=' + visitor + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000' + (secure ? '; Secure' : ''))
       }
-      return json(response, 200, { threadId })
+      return json(response, 200, { threadId, ...(weather && { weatherAvailable: true }) })
+    }
+    if (route === 'GET /api/weather/cities' || route === 'GET /api/weather/current') {
+      if (!threadId || !weather) return json(response, 404, {})
+      try {
+        if (route.endsWith('/cities')) {
+          return json(response, 200, { cities: await weather.cities(url.searchParams.get('name')?.trim() ?? '') })
+        }
+        const lat = url.searchParams.get('latitude')
+        const lon = url.searchParams.get('longitude')
+        if (!lat?.trim() || !lon?.trim() || !(Math.abs(Number(lat)) <= 90 && Math.abs(Number(lon)) <= 180)) {
+          return json(response, 400, {})
+        }
+        return json(response, 200, { temperature: await weather.temperature(Number(lat), Number(lon)) })
+      } catch {
+        return json(response, 503, {})
+      }
     }
     const cardRoute = /^\/api\/cards\/([a-f0-9-]{36})$/.exec(url.pathname)
     if (!['GET /api/thread', 'POST /api/messages', 'POST /api/card-preview', 'GET /api/cards',
