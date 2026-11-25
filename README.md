@@ -18,3 +18,11 @@
 `MODEL_API_URL`（完整 Chat Completions 地址）、`MODEL_API_KEY` 和 `MODEL_NAME`，
 并移除 `MODEL_MODE=stub`。SQLite 默认写入 `data/wanxin.sqlite`，
 可用 `SQLITE_PATH` 指定路径。
+
+### 本机 Ollama 实测
+
+```sh
+MODEL_MODE=ollama MODEL_API_URL=http://127.0.0.1:11434/api/chat MODEL_NAME=qwen3.5:4b npm run api
+```
+
+本机 Ollama 可省略 `MODEL_API_KEY`。该模式关闭思考和流式输出，仅返回正文，首次加载模型时最多等待 200 秒。
