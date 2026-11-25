@@ -56,3 +56,19 @@ blockquote { margin: 1.5rem 0; padding-left: 1rem; border-left: 2px solid #bf977
 .suggestions { flex-wrap: wrap; margin-bottom: .6rem; }
 textarea { flex: 1; min-width: 0; resize: vertical; border: 1px solid #596078; border-radius: 12px; padding: .65rem; background: #252936; }
 [role="alert"] { color: #ffcfb9; }
+
+.chat-header { gap: .5rem; flex-wrap: wrap; }
+.chat-header > div { flex: 1; }
+.chat-menu { position: relative; }
+.chat-menu summary { cursor: pointer; padding: .6rem .25rem; }
+.chat-menu button { position: absolute; right: 0; z-index: 1; white-space: nowrap; }
+.reference, .album-actions { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.reference { justify-content: space-between; margin-bottom: .5rem; }
+.reference span, .album { overflow-wrap: anywhere; }
+.album { width: 100%; }
+.album-actions h1 { margin: 0; }
+.card-list-item, .card-form { display: grid; gap: .75rem; width: 100%; margin: 1rem 0; }
+.card-list-item { text-align: left; background: #343a4c; color: inherit; }
+.card-list-item span, .card-form details p { white-space: pre-wrap; }
+.card-form label { display: grid; gap: .4rem; }
+.card-form input { min-width: 0; border: 1px solid #596078; border-radius: 12px; padding: .65rem; background: #252936; font: inherit; }

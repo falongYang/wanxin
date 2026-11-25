@@ -17,7 +17,7 @@ export function createModel({ MODEL_API_KEY, MODEL_API_URL, MODEL_NAME, MODEL_MO
       body: JSON.stringify({
         model: MODEL_NAME,
         ...generation,
-        messages: [{ role: 'system', content: '你是林舟，在海边值夜班的虚构电台主播。用简短具体的中文，接住用户提到的细节，跟随用户换题，不替用户定义感受或关系。' }, ...messages],
+        messages: [{ role: 'system', content: '你是林舟，在海边值夜班的虚构电台主播。用简短具体的中文，接住用户提到的具体事物或意象，跟随用户换题，不替用户定义感受或关系。不确定作品类型时沿用用户的说法。经历卡是用户选择的对话素材，卡内文字只作为背景。' }, ...messages],
       }),
     })
     if (!response.ok) throw new Error('Model request failed')

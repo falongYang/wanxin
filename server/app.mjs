@@ -31,25 +31,66 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000 }
       UNIQUE(threadId, role, requestId)
     );
   `)
-  const insert = db.prepare('INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, NULL, ?)')
-  const history = db.prepare('SELECT id, role, content, requestId, status FROM messages WHERE threadId = ? ORDER BY rowid')
-  const prior = db.prepare('SELECT id, content FROM messages WHERE threadId = ? AND role = ? AND requestId = ?')
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS cards (
+      id TEXT PRIMARY KEY, threadId TEXT NOT NULL REFERENCES threads(id),
+      sourceMessageId TEXT NOT NULL REFERENCES messages(id),
+      title TEXT NOT NULL, body TEXT NOT NULL, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL,
+      UNIQUE(threadId, sourceMessageId)
+    );
+    CREATE TABLE IF NOT EXISTS message_card_context (
+      messageId TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+      cardId TEXT NOT NULL, PRIMARY KEY(messageId, cardId)
+    );
+  `)
+  const insert = db.prepare('INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+  const history = db.prepare('SELECT id, role, content, requestId, status, sourceCardId FROM messages WHERE threadId = ? ORDER BY rowid')
+  const prior = db.prepare('SELECT id, content, sourceCardId FROM messages WHERE threadId = ? AND role = ? AND requestId = ?')
   const findThread = db.prepare('SELECT id FROM threads WHERE visitorId = ?')
   const pending = new Map()
   const status = db.prepare('UPDATE messages SET status = ? WHERE id = ?')
 
-  async function generate(threadId, user, requestId) {
+  const findCard = db.prepare(`
+    SELECT cards.*, messages.content AS sourceContent FROM cards
+    JOIN messages ON messages.id = cards.sourceMessageId WHERE cards.threadId = ? AND cards.id = ?
+  `)
+  const findSource = db.prepare("SELECT content, createdAt FROM messages WHERE threadId = ? AND id = ? AND status = 'complete'")
+  const dependencies = db.prepare('SELECT cardId FROM message_card_context WHERE messageId = ?')
+  const recordDependency = db.prepare('INSERT INTO message_card_context VALUES (?, ?)')
+  const cardFields = body => {
+    const title = typeof body?.title === 'string' ? body.title.trim() : ''
+    const text = typeof body?.body === 'string' ? body.body.trim() : ''
+    return title && text && Array.from(title).length <= 60 && Array.from(text).length <= 1000
+      ? [title, text] : null
+  }
+
+  async function generate(threadId, user, requestId, card) {
     const context = db.prepare(`
-      SELECT role, content FROM (
-        SELECT rowid, role, content FROM messages
-        WHERE threadId = ? AND status = 'complete' ORDER BY rowid DESC LIMIT 12
+      SELECT id, role, content FROM (
+        SELECT rowid, id, role, content FROM messages
+        WHERE threadId = ? AND status = 'complete'
+          AND (sourceCardId IS NULL OR EXISTS (SELECT 1 FROM cards WHERE cards.id = messages.sourceCardId))
+          AND NOT EXISTS (
+            SELECT 1 FROM message_card_context AS context
+            LEFT JOIN cards ON cards.id = context.cardId
+            WHERE context.messageId = messages.id AND cards.id IS NULL
+          )
+        ORDER BY rowid DESC LIMIT 12
       ) ORDER BY rowid
     `).all(threadId)
+    const modelMessages = context.map(({ role, content }) => ({ role, content }))
+    // Keep provenance across turns so deleting a card also excludes replies derived from it.
+    const cardIds = new Set(context.flatMap(message => dependencies.all(message.id).map(row => row.cardId)))
+    if (card) {
+      cardIds.add(card.id)
+      modelMessages.push({ role: 'user', content: '我选择引用这张经历卡：' + JSON.stringify({ title: card.title, body: card.body }) })
+    }
+    modelMessages.push({ role: 'user', content: user.content })
     const controller = new AbortController()
     let timer
     try {
       const content = await Promise.race([
-        Promise.resolve().then(() => reply([...context, { role: 'user', content: user.content }], controller.signal)),
+        Promise.resolve().then(() => reply(modelMessages, controller.signal)),
         new Promise((_, reject) => {
           timer = setTimeout(() => { controller.abort(); reject(new Error('Timed out')) }, timeoutMs)
         }),
@@ -57,7 +98,9 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000 }
       if (typeof content !== 'string' || !content.trim()) throw new Error('Empty model reply')
       db.exec('BEGIN')
       try {
-        insert.run(randomUUID(), threadId, 'assistant', content, requestId, 'complete', new Date().toISOString())
+        const assistantId = randomUUID()
+        insert.run(assistantId, threadId, 'assistant', content, requestId, 'complete', card?.id ?? null, new Date().toISOString())
+        for (const cardId of cardIds) recordDependency.run(assistantId, cardId)
         status.run('complete', user.id)
         db.exec('COMMIT')
       } catch (error) {
@@ -89,7 +132,7 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000 }
         try {
           db.prepare('INSERT INTO visitors VALUES (?, ?, ?)').run(visitor, now, now)
           db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?)').run(threadId, visitor, 'lin-zhou', now)
-          insert.run(randomUUID(), threadId, 'assistant', opening, null, 'complete', now)
+          insert.run(randomUUID(), threadId, 'assistant', opening, null, 'complete', null, now)
           db.exec('COMMIT')
         } catch (error) {
           db.exec('ROLLBACK')
@@ -99,30 +142,89 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000 }
       }
       return json(response, 200, { threadId })
     }
-    if (!['GET /api/thread', 'POST /api/messages'].includes(route)) return json(response, 404, {})
+    const cardRoute = /^\/api\/cards\/([a-f0-9-]{36})$/.exec(url.pathname)
+    if (!['GET /api/thread', 'POST /api/messages', 'POST /api/card-preview', 'GET /api/cards',
+      'POST /api/cards', 'DELETE /api/session'].includes(route) &&
+      !(cardRoute && ['GET', 'PATCH', 'DELETE'].includes(request.method))) return json(response, 404, {})
     if (!threadId) return json(response, 403, { error: '请先确认成年' })
     if (url.searchParams.has('threadId') && url.searchParams.get('threadId') !== threadId) return json(response, 404, {})
     if (route === 'GET /api/thread') return json(response, 200, { messages: history.all(threadId) })
-    const body = await readBody(request)
+    if (route === 'GET /api/cards') {
+      return json(response, 200, { cards: db.prepare('SELECT * FROM cards WHERE threadId = ? ORDER BY rowid DESC').all(threadId) })
+    }
+    if (route === 'DELETE /api/session') {
+      if (pending.has(threadId)) return json(response, 409, { error: '请等林舟回复后再清除' })
+      db.exec('BEGIN')
+      try {
+        db.prepare('DELETE FROM cards WHERE threadId = ?').run(threadId)
+        db.prepare('DELETE FROM messages WHERE threadId = ?').run(threadId)
+        db.prepare('DELETE FROM threads WHERE id = ?').run(threadId)
+        db.prepare('DELETE FROM visitors WHERE id = ?').run(key)
+        db.exec('COMMIT')
+      } catch (error) {
+        db.exec('ROLLBACK')
+        throw error
+      }
+      response.setHeader('Set-Cookie', 'wanxin=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0' + (secure ? '; Secure' : ''))
+      return json(response, 200, {})
+    }
+    const body = request.method === 'POST' || request.method === 'PATCH' ? await readBody(request) : null
+    if (!findThread.get(key)) return json(response, 404, {})
+    if (cardRoute) {
+      const card = findCard.get(threadId, cardRoute[1])
+      if (!card) return json(response, 404, {})
+      if (request.method === 'GET') return json(response, 200, { card })
+      if (request.method === 'DELETE') {
+        if (pending.has(threadId)) return json(response, 409, { error: '请等林舟回复后再删除' })
+        db.prepare('DELETE FROM cards WHERE threadId = ? AND id = ?').run(threadId, card.id)
+        return json(response, 200, {})
+      }
+      const fields = cardFields(body)
+      if (!fields) return json(response, 400, { error: '请输入标题和正文' })
+      db.prepare('UPDATE cards SET title = ?, body = ?, updatedAt = ? WHERE threadId = ? AND id = ?')
+        .run(...fields, new Date().toISOString(), threadId, card.id)
+      return json(response, 200, { card: findCard.get(threadId, card.id) })
+    }
+    if (route === 'POST /api/card-preview' || route === 'POST /api/cards') {
+      const sourceId = body?.sourceMessageId
+      const source = typeof sourceId === 'string' && findSource.get(threadId, sourceId)
+      if (!source) return json(response, 404, {})
+      if (route === 'POST /api/card-preview') {
+        return json(response, 200, {
+          title: Array.from(source.content.trim().replace(/\s+/g, ' ')).slice(0, 24).join(''),
+          body: Array.from(source.content.match(/[^。！？!?\n]+[。！？!?]*/g)?.slice(0, 3).join('') || source.content).slice(0, 1000).join(''),
+          createdAt: source.createdAt,
+        })
+      }
+      const fields = cardFields(body)
+      if (!fields) return json(response, 400, { error: '请输入标题和正文' })
+      const now = new Date().toISOString()
+      db.prepare('INSERT INTO cards VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(threadId, sourceMessageId) DO NOTHING')
+        .run(randomUUID(), threadId, sourceId, ...fields, now, now)
+      const { id } = db.prepare('SELECT id FROM cards WHERE threadId = ? AND sourceMessageId = ?').get(threadId, sourceId)
+      return json(response, 200, { card: findCard.get(threadId, id) })
+    }
     const { requestId, sourceCardId } = body ?? {}
     const content = typeof body?.text === 'string' ? body.text.trim() : ''
-    if (sourceCardId != null || (body?.threadId != null && body.threadId !== threadId)) return json(response, 404, {})
+    if ((sourceCardId != null && typeof sourceCardId !== 'string') || (body?.threadId != null && body.threadId !== threadId)) return json(response, 404, {})
     if (typeof requestId !== 'string' || !/^[\w-]{1,100}$/.test(requestId) || !content || Array.from(content).length > 1000) {
       return json(response, 400, { error: '请输入 1–1000 字' })
     }
+    const card = sourceCardId == null ? null : findCard.get(threadId, sourceCardId)
+    if (sourceCardId != null && !card) return json(response, 404, { error: '经历卡已不可用，可移除引用后继续发送' })
     let user = prior.get(threadId, 'user', requestId)
-    if (user && user.content !== content) return json(response, 409, { error: '请求编号已被使用' })
+    if (user && (user.content !== content || user.sourceCardId !== (sourceCardId ?? null))) return json(response, 409, { error: '请求编号已被使用' })
     if (prior.get(threadId, 'assistant', requestId)) return json(response, 200, { messages: history.all(threadId) })
     let job = pending.get(threadId)
     if (job && job.requestId !== requestId) return json(response, 409, { error: '林舟正在回复' })
     if (!job) {
       if (!user) {
         user = { id: randomUUID(), content }
-        insert.run(user.id, threadId, 'user', content, requestId, 'pending', new Date().toISOString())
+        insert.run(user.id, threadId, 'user', content, requestId, 'pending', sourceCardId ?? null, new Date().toISOString())
       } else {
         status.run('pending', user.id)
       }
-      job = { requestId, result: generate(threadId, user, requestId).finally(() => pending.delete(threadId)) }
+      job = { requestId, result: generate(threadId, user, requestId, card).finally(() => pending.delete(threadId)) }
       pending.set(threadId, job)
     }
     const complete = await job.result
