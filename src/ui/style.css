@@ -1,0 +1,58 @@
+:root {
+  font-family: system-ui, "PingFang SC", sans-serif;
+  color: #f7ede1;
+  background: #151922;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, textarea { font: inherit; }
+button {
+  min-height: 44px;
+  padding: .55rem 1rem;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: #eac392;
+  color: #271d16;
+  cursor: pointer;
+}
+button:disabled { opacity: .5; cursor: default; }
+.shell { max-width: 580px; margin: auto; }
+.discovery {
+  min-height: 100dvh;
+  padding: 2rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  background: radial-gradient(ellipse at 76% 24%, #594a54, transparent 55%), linear-gradient(#1e2334, #22212b 65%, #171a24);
+}
+.brand { letter-spacing: .25em; color: #ebc69b; }
+.intro { padding-bottom: 3rem; }
+.intro h1 { margin: .25rem 0; font-family: "Songti SC", serif; font-size: clamp(2.8rem, 9vw, 4.5rem); }
+.scene, small { color: #dfc5a9; }
+.intro p, blockquote { line-height: 1.7; }
+blockquote { margin: 1.5rem 0; padding-left: 1rem; border-left: 2px solid #bf9774; }
+.intro button { width: 100%; }
+.chat { height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: #202431; }
+.chat-header { display: flex; align-items: center; gap: 1rem; padding: .75rem 1rem; border-bottom: 1px solid #3c4050; }
+.chat-header small { display: block; margin-top: .15rem; }
+.chat-header button, .suggestions button, .bubble button { background: #303545; color: #f7ede1; border-color: #51566a; }
+.history { overflow-y: auto; padding: 1rem; }
+.bubble {
+  width: fit-content;
+  max-width: 88%;
+  margin-bottom: .75rem;
+  padding: .75rem .9rem;
+  border-radius: 14px;
+  background: #343a4c;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.bubble.user { margin-left: auto; background: #534253; }
+.bubble button { display: block; margin-top: .5rem; }
+.activity { color: #d7c4b1; }
+.composer { border-top: 1px solid #3c4050; padding: .75rem 1rem max(.75rem, env(safe-area-inset-bottom)); }
+.composer form, .suggestions { display: flex; gap: .5rem; }
+.suggestions { flex-wrap: wrap; margin-bottom: .6rem; }
+textarea { flex: 1; min-width: 0; resize: vertical; border: 1px solid #596078; border-radius: 12px; padding: .65rem; background: #252936; }
+[role="alert"] { color: #ffcfb9; }

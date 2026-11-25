@@ -5,3 +5,8 @@ dist/
 .env.*
 !.env.example
 *.sqlite*
+
+node_modules/
+dist/
+data/
+.env
