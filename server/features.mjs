@@ -19,6 +19,24 @@ export function levelOf(points) {
 
 export const MOODS = ['开心', '平静', '疲惫', '难过', '焦虑', '生气', '期待', '其他']
 
+// 生活服务目录：只提供「深链 scheme + 网页回退」，由用户设备自行决定能否唤起 App。
+// 不接入任何平台 API，不代下单、不读写任何外部账号；真实平台对接需另行商务合作。
+const SERVICE_CATEGORY_LABEL = { eat: '吃点好的', buy: '顺手买', watch: '一起看', read: '读一会儿', listen: '听一会儿', go: '出门去' }
+export const SERVICES = Object.freeze([
+  { id: 'meituan-food', name: '美团外卖', category: 'eat', scheme: 'imeituan://www.meituan.com/food', web: 'https://h5.waimai.meituan.com' },
+  { id: 'eleme', name: '饿了么', category: 'eat', scheme: 'eleme://home', web: 'https://h.ele.me' },
+  { id: 'taobao', name: '淘宝', category: 'buy', scheme: 'taobao://', web: 'https://m.taobao.com' },
+  { id: 'jd', name: '京东', category: 'buy', scheme: 'openapp.jdmobile://virtual', web: 'https://m.jd.com' },
+  { id: 'iqiyi', name: '爱奇艺', category: 'watch', scheme: 'iqiyi://', web: 'https://m.iqiyi.com' },
+  { id: 'tencent-video', name: '腾讯视频', category: 'watch', scheme: 'tenvideo2://', web: 'https://m.v.qq.com' },
+  { id: 'bilibili', name: '哔哩哔哩', category: 'watch', scheme: 'bilibili://', web: 'https://m.bilibili.com' },
+  { id: 'qidian', name: '起点读书', category: 'read', scheme: 'qidianapp://', web: 'https://m.qidian.com' },
+  { id: 'tomato', name: '番茄小说', category: 'read', scheme: 'fanbenovel://', web: 'https://fanqienovel.com' },
+  { id: 'netease-music', name: '网易云音乐', category: 'listen', scheme: 'orpheus://', web: 'https://music.163.com/m' },
+  { id: 'amap', name: '高德地图', category: 'go', scheme: 'iosamap://', web: 'https://wap.amap.com' },
+].map(({ id, name, category, scheme, web }) =>
+  Object.freeze({ id, name, category, categoryLabel: SERVICE_CATEGORY_LABEL[category], scheme, web })))
+
 // 捏捏形象：只约定字段名与类型（与客户端 avatar.tsx 对应），不校验具体选项值，
 // 选项目录留在客户端，服务端存储的是「相对角色默认形象的覆盖配置」。
 const AVATAR_FIELDS = { skin: 'number', hair: 'string', hairColor: 'number', eyes: 'string', mouth: 'string', blush: 'string', outfit: 'string', outfitColor: 'number', accessory: 'string' }
@@ -269,6 +287,17 @@ export function createFeatures(db, { authorization, usage, analytics, telemetry,
         award(threadId, 2)
         analytics.record(key, 'moment_comment')
         return { status: 200, data: { comment: { id, momentId: arg, author: 'user', content, createdAt: now() } } }
+      }
+    }
+
+    if (resource === 'services') {
+      if (!arg && method === 'GET') {
+        return { status: 200, data: { services: SERVICES } }
+      }
+      if (arg && action === 'click' && method === 'POST') {
+        if (!SERVICES.some(service => service.id === arg)) return { status: 404, data: {} }
+        analytics.record(key, 'service_click')
+        return { status: 200, data: { ok: true } }
       }
     }
 

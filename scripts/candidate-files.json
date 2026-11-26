@@ -45,6 +45,7 @@
   "src/ui/card-library.js",
   "src/ui/hub.tsx",
   "src/ui/main.tsx",
+  "src/ui/services.tsx",
   "src/ui/style.css",
   "tests/acceptance-d1.test.mjs",
   "tests/access.test.mjs",

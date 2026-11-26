@@ -1,6 +1,7 @@
 import { groupCards } from './card-library.js'
 import { MeScreen, MomentsScreen, BondBar, type Bond } from './hub'
 import { AvatarScreen, Avatar, CHARACTER_DEFAULT_AVATAR, FALLBACK_AVATAR, mergeAvatar, type AvatarConfig } from './avatar'
+import { ServicesScreen, detectServiceHint, fetchServices, openService, type ServiceItem } from './services'
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -138,7 +139,7 @@ function ReplyActivity({ message, name = '角色' }: { message: Message; name?: 
 }
 
 function App() {
-  const [screen, setScreen] = useState<'loading' | 'gate' | 'discover' | 'chat' | 'cards' | 'card' | 'me' | 'moments' | 'avatar'>('loading')
+  const [screen, setScreen] = useState<'loading' | 'gate' | 'discover' | 'chat' | 'cards' | 'card' | 'me' | 'moments' | 'avatar' | 'services'>('loading')
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
   const [queue, setQueue] = useState<QueuedMessage[]>([])
@@ -182,7 +183,9 @@ function App() {
   const [listening, setListening] = useState(false)
   const [bond, setBond] = useState<Bond | null>(null)
   const [avatarOverride, setAvatarOverride] = useState<Partial<AvatarConfig> | null>(null)
+  const [services, setServices] = useState<ServiceItem[]>([])
   const avatarConfig = mergeAvatar((character && CHARACTER_DEFAULT_AVATAR[character.id]) || FALLBACK_AVATAR, avatarOverride)
+  const serviceHint = screen === 'chat' && !busy ? detectServiceHint(draft, services) : null
   useEffect(() => {
     if (screen !== 'discover' && screen !== 'me' && screen !== 'moments') return
     void api<Bond>('bond').then(setBond).catch(() => {})
@@ -204,6 +207,7 @@ function App() {
       if (session.threadId) {
         void api<{ config: Partial<AvatarConfig> | null }>('avatar')
           .then(({ config }) => setAvatarOverride(config)).catch(() => {})
+        void fetchServices(api).then(setServices).catch(() => {})
       }
     } catch {
       setError('暂时无法连接，请重试。')
@@ -582,6 +586,11 @@ function App() {
         {error && <p role="alert">{error}</p>}
       {showAdmission && <button type="button" onClick={() => setScreen('gate')}>重新确认邀请</button>}
         {notice && <p role="status">{notice}</p>}
+        {serviceHint && <div className="service-hint">
+          <span>听起来和{serviceHint.name}有关，顺手打开？</span>
+          <button type="button" disabled={busy} onClick={() => openService(serviceHint)}>打开{serviceHint.name}</button>
+          <button type="button" className="secondary" disabled={busy} onClick={() => { setDraft(''); setScreen('services') }}>服务面板</button>
+        </div>}
         {reference && <div className="reference">
           <span>引用：{reference.title}</span>
           <button type="button" disabled={busy} onClick={() => {
@@ -743,9 +752,13 @@ function App() {
             <h2>共同经历</h2><p>回看你和{character?.name ?? '角色'}留下的故事。</p>
             <button disabled={busy} onClick={() => { setReturnFromCards('discover'); void cardAction(showCards) }}>打开共同经历</button>
           </article>
+          <article>
+            <h2>生活服务</h2><p>外卖、购物、看剧、听歌——从晚信顺手打开。</p>
+            <button disabled={busy} onClick={() => { setError(''); setScreen('services') }}>打开服务面板</button>
+          </article>
         </div>
         <nav className="foyer-heading" aria-label="切换玄关卡片">
-          {['深夜电台', '共同经历'].map((label, index) => <button key={label} onClick={() => {
+          {['深夜电台', '共同经历', '生活服务'].map((label, index) => <button key={label} onClick={() => {
             const panel = foyer.current
             if (panel) panel.scrollLeft = panel.clientWidth * index
           }}>{label}</button>)}
@@ -754,8 +767,9 @@ function App() {
       {screen === 'me' && <MeScreen api={api} onError={message => setError(message)} character={character} refreshHome={() => {}} avatar={<Avatar config={avatarConfig} size={72} glow />} onEditAvatar={() => { setError(''); setScreen('avatar') }} />}
       {screen === 'moments' && <MomentsScreen api={api} onError={message => setError(message)} character={character} avatar={<Avatar config={avatarConfig} size={34} />} />}
       {screen === 'avatar' && <AvatarScreen api={api} onError={message => setError(message)} characterId={character?.id} characterName={character?.name ?? 'TA'} onSaved={config => setAvatarOverride(config)} onClose={() => { setError(''); setScreen('me') }} />}
-      {(screen === 'discover' || screen === 'me' || screen === 'moments' || screen === 'avatar') && <nav className="tabbar" aria-label="主导航">
-        <button type="button" className={screen === 'discover' ? 'active' : ''} onClick={() => { setError(''); setScreen('discover') }}>玄关</button>
+      {screen === 'services' && <ServicesScreen api={api} onError={message => setError(message)} services={services} />}
+      {(screen === 'discover' || screen === 'me' || screen === 'moments' || screen === 'avatar' || screen === 'services') && <nav className="tabbar" aria-label="主导航">
+        <button type="button" className={screen === 'discover' || screen === 'services' ? 'active' : ''} onClick={() => { setError(''); setScreen('discover') }}>玄关</button>
         <button type="button" className={screen === 'moments' ? 'active' : ''} onClick={() => { setError(''); setScreen('moments') }}>朋友圈</button>
         <button type="button" className={screen === 'me' || screen === 'avatar' ? 'active' : ''} onClick={() => { setError(''); setScreen('me') }}>我的</button>
       </nav>}

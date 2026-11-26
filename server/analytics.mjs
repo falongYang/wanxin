@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto'
 
 export const RETENTION_MS = 7 * 86400000
+// 试用事件白名单：核心漏斗（send/card_*）+ 陪伴功能互动（羁绊/心情/朋友圈/形象/服务/仪式）。
+// 表带 CHECK 约束，扩展时通过 analyticsEventsSql 与旧库自动迁移。
+const EVENT_WHITELIST = ['send', 'first_send', 'card_preview', 'card_save', 'card_open', 'card_send',
+  'mood_checkin', 'moment_post', 'moment_like', 'moment_comment', 'character_moment',
+  'avatar_save', 'service_click', 'letter_open', 'wish_make', 'anniversary_save', 'gift_send']
+const analyticsEventsSql = () => `event TEXT NOT NULL CHECK(event IN (${EVENT_WHITELIST.map(name => "'" + name + "'").join(',')}))`
 export function createAnalytics(db, clock = () => new Date()) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS analytics_visitors (
@@ -9,18 +15,18 @@ export function createAnalytics(db, clock = () => new Date()) {
     );
     CREATE TABLE IF NOT EXISTS trial_events (
       analysisId TEXT NOT NULL REFERENCES analytics_visitors(analysisId) ON DELETE CASCADE,
-      event TEXT NOT NULL CHECK(event IN ('send','first_send','card_preview','card_save','card_open','card_send')),
+      ${analyticsEventsSql()},
       occurredAt TEXT NOT NULL
     );
   `)
   // SQLite CHECK constraints require a table rebuild for existing installations.
   const schema = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'trial_events'").get().sql
-  if (!schema.includes("'send'")) {
+  if (!schema.includes("'mood_checkin'")) {
     db.exec('BEGIN IMMEDIATE')
     try {
       db.exec(`CREATE TABLE trial_events_next (
         analysisId TEXT NOT NULL REFERENCES analytics_visitors(analysisId) ON DELETE CASCADE,
-        event TEXT NOT NULL CHECK(event IN ('send','first_send','card_preview','card_save','card_open','card_send')),
+        ${analyticsEventsSql()},
         occurredAt TEXT NOT NULL
       );
       INSERT INTO trial_events_next SELECT analysisId, event, occurredAt FROM trial_events ORDER BY rowid;

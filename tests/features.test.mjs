@@ -139,6 +139,63 @@ test('捏捏形象：保存/读取/形状校验/线程隔离/级联删除', asyn
   assert.equal((await request('avatar', null, fresh)).json().config, null)
 })
 
+test('生活服务：目录下发、点击落账、未知服务 404', async t => {
+  const app = createApp(':memory:', async () => '合成回复', { access: developmentPolicy() })
+  t.after(() => app.emit('close'))
+  const request = makeClient(app)
+  const cookie = await session(request)
+  const catalog = (await request('services', null, cookie)).json()
+  assert.ok(catalog.services.length >= 10)
+  assert.ok(catalog.services.every(service => service.id && service.name && service.category && service.categoryLabel && service.scheme && service.web))
+  assert.ok(catalog.services.some(service => service.id === 'meituan-food'))
+  const click = await request('services/meituan-food/click', {}, cookie)
+  assert.equal(click.status, 200)
+  assert.equal(click.json().ok, true)
+  assert.equal((await request('services/not-exist/click', {}, cookie)).status, 404)
+  // 服务点击不影响羁绊
+  assert.equal((await request('bond', null, cookie)).json().points, 0)
+})
+
+test('受控模式服务点击记入试用事件白名单', async t => {
+  const f = fixture(t)
+  const db = new DatabaseSync(f.env.SQLITE_PATH)
+  f.after(() => db.close())
+  const app = createApp(f.env.SQLITE_PATH, async () => '合成回复', { access: f.policy })
+  f.after(() => app.emit('close'))
+  const request = makeClient(app)
+  const cookie = await session(request, undefined, f.token)
+  await request('services/taobao/click', {}, cookie)
+  assert.equal(db.prepare("SELECT count(*) n FROM trial_events WHERE event = 'service_click'").get().n, 1)
+  await request('mood', { mood: '开心' }, cookie)
+  assert.equal(db.prepare("SELECT count(*) n FROM trial_events WHERE event = 'mood_checkin'").get().n, 1)
+})
+
+test('分析事件白名单对旧库自动迁移扩展', async t => {
+  const { randomUUID } = await import('node:crypto')
+  const { DatabaseSync } = await import('node:sqlite')
+  const { rmSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const file = join(tmpdir(), 'wanxin-analytics-migrate-' + randomUUID() + '.sqlite')
+  const old = new DatabaseSync(file)
+  old.exec(`CREATE TABLE visitors (id TEXT PRIMARY KEY, adultConfirmedAt TEXT NOT NULL, createdAt TEXT NOT NULL);
+    CREATE TABLE analytics_visitors (visitorId TEXT PRIMARY KEY REFERENCES visitors(id) ON DELETE CASCADE, analysisId TEXT NOT NULL UNIQUE);
+    CREATE TABLE trial_events (analysisId TEXT NOT NULL REFERENCES analytics_visitors(analysisId) ON DELETE CASCADE,
+      event TEXT NOT NULL CHECK(event IN ('send','first_send','card_preview','card_save','card_open','card_send')),
+      occurredAt TEXT NOT NULL);`)
+  old.close()
+  t.after(() => { rmSync(file, { force: true }) })
+  const app = createApp(file, async () => '合成回复', { access: developmentPolicy() })
+  t.after(() => app.emit('close'))
+  const request = makeClient(app)
+  const cookie = await session(request)
+  // 旧白名单下 mood_checkin 会被 OR IGNORE 静默丢弃；迁移后应正常入库
+  await request('mood', { mood: '开心' }, cookie)
+  const db = new DatabaseSync(file)
+  t.after(() => db.close())
+  assert.equal(db.prepare("SELECT count(*) n FROM trial_events WHERE event = 'mood_checkin'").get().n, 1)
+})
+
 test('朋友圈：发布/点赞/评论/角色发动态每日一次', async t => {
   const app = createApp(':memory:', async () => '角色的一条动态正文\n随想', { access: developmentPolicy() })
   t.after(() => app.emit('close'))
