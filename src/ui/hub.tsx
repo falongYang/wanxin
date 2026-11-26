@@ -108,3 +108,106 @@ export function MeScreen({ api, onError, character, refreshHome }: {
     {notice && <p role="status">{notice}</p>}
   </section>
 }
+/* ---------- 朋友圈 ---------- */
+type MomentComment = { id: string; momentId: string; author: 'user' | 'character'; content: string; createdAt: string }
+type Moment = { id: string; author: 'user' | 'character'; content: string; moodTag: string | null; createdAt: string; likes: number; liked: 0 | 1; comments: MomentComment[] }
+
+function momentTime(iso: string) {
+  const date = new Date(iso)
+  if (!Number.isFinite(date.getTime())) return ''
+  return date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+export function MomentsScreen({ api, onError, character }: { api: Api; onError: FeatureError; character: Character | null }) {
+  const [moments, setMoments] = useState<Moment[]>([])
+  const [draft, setDraft] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState('')
+  const [commenting, setCommenting] = useState<string | null>(null)
+  const [commentDraft, setCommentDraft] = useState('')
+
+  const load = async () => {
+    try { setMoments((await api<{ moments: Moment[] }>('moments')).moments) }
+    catch { onError('暂时无法加载朋友圈。') }
+  }
+  useEffect(() => { void load() }, [])
+
+  async function post(event: FormEvent) {
+    event.preventDefault()
+    const content = draft.trim()
+    if (!content || busy) return
+    setBusy(true)
+    try {
+      await api('moments', { content })
+      setDraft('')
+      await load()
+      setNotice('已发布。')
+    } catch { onError('发布失败，请重试。') } finally { setBusy(false) }
+  }
+
+  async function refreshByCharacter() {
+    if (busy) return
+    setBusy(true)
+    try {
+      const result = await api<{ already?: boolean }>('moments/refresh')
+      if (!result.already) { await load(); setNotice(`${character?.name ?? 'TA'}发了一条新动态。`) }
+      else setNotice('TA今天已经发过一条了，明天再来。')
+    } catch { onError('TA暂时发不出来，稍后再试。') } finally { setBusy(false) }
+  }
+
+  async function like(moment: Moment) {
+    try {
+      const result = await api<{ moment: { likes: number; liked: 0 | 1 } }>('moments/' + moment.id + '/like')
+      setMoments(previous => previous.map(item => item.id === moment.id ? { ...item, likes: result.moment.likes, liked: result.moment.liked } : item))
+    } catch { onError('点赞失败。') }
+  }
+
+  async function comment(moment: Moment) {
+    const content = commentDraft.trim()
+    if (!content) return
+    try {
+      const result = await api<{ comment: MomentComment }>('moments/' + moment.id + '/comment', { content })
+      setMoments(previous => previous.map(item => item.id === moment.id ? { ...item, comments: [...item.comments, result.comment] } : item))
+      setCommentDraft('')
+      setCommenting(null)
+    } catch { onError('评论失败。') }
+  }
+
+  return <section className="moments-screen">
+    <header className="album-actions"><h1>{character?.name ?? 'TA'}与我的朋友圈</h1></header>
+    <div className="moments-composer">
+      <form onSubmit={post}>
+        <textarea aria-label="发一条动态" placeholder="此刻想留下一句…" maxLength={500} rows={2} value={draft}
+          onChange={event => setDraft(event.target.value)} />
+        <button type="submit" disabled={busy || !draft.trim()}>发布</button>
+      </form>
+      <button type="button" className="secondary" disabled={busy} onClick={() => void refreshByCharacter()}>让{character?.name ?? 'TA'}也发一条</button>
+    </div>
+    {notice && <p role="status">{notice}</p>}
+    {!moments.length && <p className="muted moments-empty">还没有动态。留下一句，或者让TA先说。</p>}
+    <ol className="moment-list">
+      {moments.map(moment => <li key={moment.id} className={'moment ' + moment.author}>
+        <div className="moment-head">
+          <strong>{moment.author === 'character' ? (character?.name ?? 'TA') : '我'}</strong>
+          {moment.moodTag && <small>· {moment.moodTag}</small>}
+          <time>{momentTime(moment.createdAt)}</time>
+        </div>
+        <p className="moment-body">{moment.content}</p>
+        <div className="moment-tools">
+          <button type="button" className={'moment-like' + (moment.liked ? ' active' : '')} onClick={() => void like(moment)}>
+            {moment.liked ? '♥' : '♡'} {moment.likes || ''}
+          </button>
+          <button type="button" className="secondary" onClick={() => { setCommenting(commenting === moment.id ? null : moment.id); setCommentDraft('') }}>评论</button>
+        </div>
+        {moment.comments.length > 0 && <ul className="moment-comments">
+          {moment.comments.map(item => <li key={item.id}><strong>{item.author === 'character' ? (character?.name ?? 'TA') : '我'}</strong> {item.content}</li>)}
+        </ul>}
+        {commenting === moment.id && <form className="moment-comment-form" onSubmit={event => { event.preventDefault(); void comment(moment) }}>
+          <input aria-label="评论内容" placeholder="想说一句…" maxLength={300} value={commentDraft}
+            onChange={event => setCommentDraft(event.target.value)} />
+          <button type="submit" disabled={!commentDraft.trim()}>发送</button>
+        </form>}
+      </li>)}
+    </ol>
+  </section>
+}

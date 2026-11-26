@@ -157,6 +157,87 @@ export function createFeatures(db, { authorization, usage, analytics, telemetry,
       }
     }
 
+    if (resource === 'moments') {
+      const feedQuery = `
+        SELECT moments.*, (SELECT count(*) FROM moment_likes WHERE momentId = moments.id) AS likes,
+          EXISTS(SELECT 1 FROM moment_likes WHERE momentId = moments.id AND threadId = ?) AS liked
+        FROM moments WHERE moments.threadId = ? ORDER BY moments.rowid DESC`
+      const singleQuery = `
+        SELECT moments.*, (SELECT count(*) FROM moment_likes WHERE momentId = moments.id) AS likes,
+          EXISTS(SELECT 1 FROM moment_likes WHERE momentId = moments.id AND threadId = ?) AS liked
+        FROM moments WHERE moments.threadId = ? AND moments.id = ?`
+      const dayStartIso = day => new Date(day + 'T00:00:00+08:00').toISOString()
+      if (!arg && method === 'GET') {
+        const rows = db.prepare(feedQuery).all(threadId, threadId)
+        const comments = db.prepare('SELECT id, momentId, author, content, createdAt FROM moment_comments ORDER BY rowid').all()
+        const map = new Map(rows.map(row => [row.id, { ...row, comments: [] }]))
+        for (const comment of comments) map.get(comment.momentId)?.comments.push(comment)
+        return { status: 200, data: { moments: [...map.values()] } }
+      }
+      if (!arg && method === 'POST') {
+        const content = typeof body?.content === 'string' ? body.content.trim() : ''
+        const moodTag = typeof body?.moodTag === 'string' ? body.moodTag.trim().slice(0, 12) : null
+        if (!content || Array.from(content).length > 500) return { status: 400, data: { error: '动态需要 1–500 字' } }
+        const id = randomUUID()
+        db.prepare('INSERT INTO moments VALUES (?, ?, ?, ?, ?, ?)').run(id, threadId, 'user', content, moodTag, now())
+        award(threadId, 3)
+        analytics.record(key, 'moment_post')
+        return { status: 200, data: { moment: db.prepare(singleQuery).get(threadId, threadId, id) } }
+      }
+      // 角色发一条动态：每日一次，走 moment 网关，失败降级模板
+      if (arg === 'refresh' && method === 'POST') {
+        const day = dayKey(clock)
+        const postedToday = !!db.prepare("SELECT 1 FROM moments WHERE threadId = ? AND author = 'character' AND createdAt >= ?").get(threadId, dayStartIso(day))
+        if (postedToday) return { status: 200, data: { already: true } }
+        const context = chatContext(threadId)
+        let content = null
+        let moodTag = '随想'
+        const card = db.prepare('SELECT title FROM cards WHERE threadId = ? ORDER BY rowid DESC LIMIT 1').get(threadId)
+        const modelReply = await callModel(ctx, 'moment', 'moment:' + day + ':' + threadId,
+          [{ role: 'user', content: `根据我们最近的对话，发一条你自己的朋友圈动态（中文，60字内，口吻符合你的人设，不@用户，不使用引号）。` },
+            ...context.slice(-8),
+            ...(card ? [{ role: 'user', content: '用户收藏过一张标题为「' + card.title + '」的经历卡。' }] : [])],
+          persona + '现在你要发一条自己的朋友圈动态，只输出动态正文，结尾另起一行输出心情标签（从：平静/开心/想念/感触/夜航/随想 中选一个），格式：正文\n标签')
+        if (modelReply) {
+          const parts = modelReply.split(/\n+/)
+          content = parts[0].trim()
+          moodTag = ['平静', '开心', '想念', '感触', '夜航', '随想'].includes(parts.at(-1)?.trim()) ? parts.at(-1).trim() : '随想'
+          if (!content) content = modelReply.trim()
+        }
+        if (!content) {
+          // 零成本降级：从最近的经历卡或聊天生成一条模板动态
+          content = card ? `把「${card.title}」又翻了一遍。有些片段，越看越舍不得放下。`
+            : context.length ? '刚才聊的那些，我都记下了。今晚的节目单里多了一行。'
+            : '电台的灯亮着，海面很平。你们都还好吗？'
+          moodTag = '随想'
+        }
+        const id = randomUUID()
+        db.prepare('INSERT INTO moments VALUES (?, ?, ?, ?, ?, ?)').run(id, threadId, 'character', content.slice(0, 500), moodTag, now())
+        analytics.record(key, 'character_moment')
+        return { status: 200, data: { moment: db.prepare(singleQuery).get(threadId, threadId, id) } }
+      }
+      if (arg && action === 'like' && method === 'POST') {
+        const target = db.prepare('SELECT id FROM moments WHERE id = ? AND threadId = ?').get(arg, threadId)
+        if (!target) return { status: 404, data: {} }
+        const saved = db.prepare('INSERT OR IGNORE INTO moment_likes VALUES (?, ?)').run(arg, threadId)
+        if (saved.changes) { award(threadId, 1); analytics.record(key, 'moment_like') }
+        else db.prepare('DELETE FROM moment_likes WHERE momentId = ? AND threadId = ?').run(arg, threadId)
+        const row = db.prepare(singleQuery).get(threadId, threadId, arg)
+        return { status: 200, data: { moment: { id: arg, likes: row?.likes ?? 0, liked: row?.liked ?? 0 } } }
+      }
+      if (arg && action === 'comment' && method === 'POST') {
+        const target = db.prepare('SELECT id FROM moments WHERE id = ? AND threadId = ?').get(arg, threadId)
+        if (!target) return { status: 404, data: {} }
+        const content = typeof body?.content === 'string' ? body.content.trim() : ''
+        if (!content || Array.from(content).length > 300) return { status: 400, data: { error: '评论需要 1–300 字' } }
+        const id = randomUUID()
+        db.prepare('INSERT INTO moment_comments VALUES (?, ?, ?, ?, ?)').run(id, arg, 'user', content, now())
+        award(threadId, 2)
+        analytics.record(key, 'moment_comment')
+        return { status: 200, data: { comment: { id, momentId: arg, author: 'user', content, createdAt: now() } } }
+      }
+    }
+
     if (resource === 'home' && method === 'GET') {
       const day = dayKey(clock)
       const mood = db.prepare('SELECT mood FROM mood_log WHERE threadId = ? AND day = ?').get(threadId, day)
