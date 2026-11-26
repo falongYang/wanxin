@@ -68,3 +68,26 @@
 - 无障碍与既约保持：44px 触控、焦点金环、320px 无横向溢出、`prefers-reduced-motion` 全关动效。
 
 验证：本地 48/48 测试、构建通过；320/390/1280 三视口截屏（`docs/verification/night-voyage-style/`，含晨间主题与生产门页）；生产静态产物 SHA-256 与本地构建逐字节一致（index-CuDBqt2R.css / index-B_WPO5pa.js），API 未变更未重启。后端零改动，仅前端静态资源发版。
+
+> AI生成
+
+## 附录 · 陪伴功能六阶段上线（同日第三次发版）
+
+六阶段功能随本附录一次性上线（对应本地提交 079d274 → 81101ca）：羁绊与心情（阶段1）、朋友圈（阶段2）、捏捏形象（阶段3）、生活服务（阶段4）、仪式互动（阶段5）、玄关卡片压缩打磨（阶段6）。
+
+- **后端**：`server/features.mjs` 新增 bond/mood/home/moments/avatar/services/letters/wishes/anniversaries/gifts 路由（线程级隔离、级联删除）；新表 bond、mood_log、moments、moment_likes、moment_comments、avatar_config、letters、anniversaries、wishes、gift_log（仅增量建表，旧数据不动）。
+- **额度网关**：操作白名单扩展为 message/preview/moment/letter；信笺与角色动态走 reserve/settle，失败降级零成本模板。
+- **事件白名单**：`trial_events` CHECK 白名单扩至 17 个事件（新增 mood_checkin/moment_*/avatar_save/service_click/letter_open/wish_make/anniversary_save/gift_send），应用初始化对旧库自动事务迁移，原事件保留；此前 mood/moment 等事件被旧白名单静默丢弃的问题随迁移修复。
+- **前端**：新增 `src/ui/avatar.tsx`（原创分层 SVG 捏人）、`src/ui/services.tsx`（深链+网页回退+首点授权）、`src/ui/rituals.tsx`（信箱/河灯/纪念日/礼物）；玄关四张横滑卡片；聊天关键词快捷入口。
+- **安全边界**：生活服务只做深链 scheme + 网页回退与匿名点击统计，不接入平台 API、不代操作账号（真实对接需商务合作）；features 未匹配路由由 500 改 404；朋友圈点赞/角色发动态的 GET/POST 方法错误已修复。
+- **打磨**：玄关第一卡从 808px 压至 ~615px（头像叠入弧顶、开场白折叠 3 行），390 视口下主 CTA 完整避开悬浮 tabbar；tabbar 稍贴底。三视口双主题 12 张截图见 `docs/verification/companionship-stage/`。
+
+验证（2026-11-26 20:00 前后）：
+
+- 本地：`npm test` 64/64、`npm run build` 通过；部署包 SHA-256 本地与服务器一致。
+- 服务器：healthcheck 除实例锁（运行中持锁的预期 FAIL）外全部 OK（HTTP 临时通道 WARN 依旧）；`sudo service wanxin restart` 后 3001/nginx 均 200；静态产物 `index-Bmy_8fE0.js` / `index-CnHCFS0t.css` 与本地构建逐字节一致。
+- 端到端（trial-004 真实 DeepSeek）：信笺生成走 letter 网关 success（孙晚人设天台夜航口吻）；读信 +2、礼物 +8、羁绊 10/100；`trial_events` 新增 letter_open、gift_send（旧库白名单迁移生效）；`gift_log` 落账；未认证服务点击 403。
+- 回滚：部署前备份至 `/var/www/_rollback_wanxin_20261126-195839/`（旧后端、旧前端、数据快照、package.json），指针 `/var/www/_last_wanxin_backup`。
+- 邀请消耗：token-003 已于本日早间被兑换（非本附录消耗）；本附录验收消耗 token-004。token-005~007 仍未用。
+
+> AI生成
