@@ -151,8 +151,8 @@ blockquote {
 
 /* 拱门场景（角色门厅） */
 .radio-scene {
-  height: clamp(150px, 26vh, 230px); position: relative; overflow: hidden;
-  margin: 2rem 0 0;
+  height: clamp(130px, 20vh, 200px); position: relative; overflow: hidden;
+  margin: .7rem 0 0;
   border-radius: 50% 50% 14px 14px / 36% 36% 14px 14px;
   background:
     radial-gradient(circle at 68% 30%, #e9d2a6 0 11px, transparent 12px),
@@ -178,12 +178,15 @@ blockquote {
 .foyer { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; position: relative; z-index: 1; }
 .foyer article {
   flex: 0 0 100%; min-width: 0; scroll-snap-align: start;
-  padding: 1.35rem; border: 1px solid var(--line); border-radius: 22px;
+  padding: 1.1rem; border: 1px solid var(--line); border-radius: 22px;
   background: var(--panel); backdrop-filter: blur(14px);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06), 0 22px 50px -30px rgba(0, 0, 0, .7);
 }
-.foyer article h1, .foyer article h2 { margin: .2rem 0; font-family: var(--serif); }
-.foyer article > button { width: 100%; margin-top: .4rem; }
+.foyer article h1, .foyer article h2 { margin: .05rem 0; font-family: var(--serif); }
+.foyer article > button { width: 100%; margin-top: .25rem; }
+.foyer article blockquote {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+}
 
 /* 天气（玻璃折叠件） */
 .weather {
@@ -551,7 +554,7 @@ blockquote {
 /* ---------- 底部标签栏（玻璃胶囊） ---------- */
 .tabbar {
   position: fixed; left: 50%; transform: translateX(-50%);
-  bottom: calc(.8rem + env(safe-area-inset-bottom));
+  bottom: calc(.55rem + env(safe-area-inset-bottom));
   z-index: 8; display: flex; gap: .2rem;
   padding: .4rem .5rem; border-radius: 999px;
   background: linear-gradient(165deg, rgba(255, 255, 255, .06), transparent 45%), var(--glass);
@@ -575,7 +578,7 @@ blockquote {
 
 /* ---------- 羁绊 ---------- */
 .bond { margin: .9rem 0 .4rem; }
-.bond.compact { margin: .55rem 0 .75rem; }
+.bond.compact { margin: .45rem 0 .55rem; }
 .bond-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: .4rem; }
 .bond-head span { color: var(--gold); font-family: var(--serif); letter-spacing: .12em; font-size: .85rem; }
 .bond-head small { color: var(--faint); font-size: .68rem; letter-spacing: .06em; }
@@ -661,7 +664,8 @@ blockquote {
 .avatar.glow { filter: drop-shadow(0 0 16px rgba(217, 188, 132, .4)); }
 .chat-who { display: flex; align-items: center; gap: .55rem; min-width: 0; }
 .chat-who span { min-width: 0; }
-.foyer-avatar { display: flex; justify-content: center; margin: .2rem 0 .9rem; }
+.radio-scene .foyer-avatar { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); margin: 0; }
+.foyer-avatar { display: flex; justify-content: center; margin: .1rem 0 .7rem; }
 .me-avatar {
   display: flex; align-items: center; gap: .95rem; width: 100%;
   margin-bottom: .95rem; padding: .95rem 1.15rem; text-align: start;

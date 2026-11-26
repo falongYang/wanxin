@@ -741,8 +741,7 @@ function App() {
         {weatherAvailable && <Weather city={city} selectCity={setCity} />}
         <div className="foyer" ref={foyer}>
           <article>
-            <div className="radio-scene" aria-hidden="true"><span>{character?.scene ?? '深夜 · 晚信'}</span></div>
-            <div className="foyer-avatar" aria-hidden="true"><Avatar config={avatarConfig} size={104} glow /></div>
+            <div className="radio-scene" aria-hidden="true"><span>{character?.scene ?? '深夜 · 晚信'}</span><div className="foyer-avatar"><Avatar config={avatarConfig} size={64} glow /></div></div>
             <p className="scene">{character?.scene?.split('·')[0].trim() ?? '深夜'}</p><h1>{character?.name ?? '角色'}</h1>
             <small>AI 虚构角色</small><p>{character?.intro ?? ''}</p>
             <blockquote>{character?.opening ?? ''}</blockquote>
