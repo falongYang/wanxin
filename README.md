@@ -26,3 +26,7 @@ MODEL_MODE=ollama MODEL_API_URL=http://127.0.0.1:11434/api/chat MODEL_NAME=qwen3
 ```
 
 本机 Ollama 可省略 `MODEL_API_KEY`。该模式关闭思考和流式输出，仅返回正文，首次加载模型时最多等待 200 秒。
+
+## 匿名试用指标
+
+[本地运行、七天窗口与指标口径](docs/analytics.md)说明只读聚合命令、分子分母、次日成熟条件、隐私与历史限制。

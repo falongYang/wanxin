@@ -1,3 +1,4 @@
+import { createAnalytics } from './analytics.mjs'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { DatabaseSync } from 'node:sqlite'
@@ -18,7 +19,7 @@ async function readBody(request) {
   try { return JSON.parse(body) } catch { return null }
 }
 
-export function createApp(filename, reply, { secure = false, timeoutMs = 15000, weather } = {}) {
+export function createApp(filename, reply, { secure = false, timeoutMs = 15000, weather, clock = () => new Date() } = {}) {
   const db = new DatabaseSync(filename)
   db.exec(`
     PRAGMA foreign_keys = ON;
@@ -43,6 +44,7 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
       cardId TEXT NOT NULL, PRIMARY KEY(messageId, cardId)
     );
   `)
+  const analytics = createAnalytics(db, clock)
   const insert = db.prepare('INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
   const history = db.prepare('SELECT id, role, content, requestId, status, sourceCardId FROM messages WHERE threadId = ? ORDER BY rowid')
   const prior = db.prepare('SELECT id, content, sourceCardId FROM messages WHERE threadId = ? AND role = ? AND requestId = ?')
@@ -117,6 +119,7 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
   }
 
   async function handle(request, response) {
+    analytics.prune()
     const url = new URL(request.url, 'http://localhost')
     const key = request.headers.cookie?.match(/(?:^|;\s*)wanxin=([a-f0-9-]{36})(?:;|$)/)?.[1]
     let threadId = key && findThread.get(key)?.id
@@ -189,7 +192,10 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
     if (cardRoute) {
       const card = findCard.get(threadId, cardRoute[1])
       if (!card) return json(response, 404, {})
-      if (request.method === 'GET') return json(response, 200, { card })
+      if (request.method === 'GET') {
+        analytics.record(key, 'card_open')
+        return json(response, 200, { card })
+      }
       if (request.method === 'DELETE') {
         if (pending.has(threadId)) return json(response, 409, { error: '请等林舟回复后再删除' })
         db.prepare('DELETE FROM cards WHERE threadId = ? AND id = ?').run(threadId, card.id)
@@ -206,6 +212,7 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
       const source = typeof sourceId === 'string' && findSource.get(threadId, sourceId)
       if (!source) return json(response, 404, {})
       if (route === 'POST /api/card-preview') {
+        analytics.record(key, 'card_preview')
         return json(response, 200, {
           title: Array.from(source.content.trim().replace(/\s+/g, ' ')).slice(0, 24).join(''),
           body: Array.from(source.content.match(/[^。！？!?\n]+[。！？!?]*/g)?.slice(0, 3).join('') || source.content).slice(0, 1000).join(''),
@@ -215,8 +222,9 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
       const fields = cardFields(body)
       if (!fields) return json(response, 400, { error: '请输入标题和正文' })
       const now = new Date().toISOString()
-      db.prepare('INSERT INTO cards VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(threadId, sourceMessageId) DO NOTHING')
+      const saved = db.prepare('INSERT INTO cards VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(threadId, sourceMessageId) DO NOTHING')
         .run(randomUUID(), threadId, sourceId, ...fields, now, now)
+      if (saved.changes) analytics.record(key, 'card_save')
       const { id } = db.prepare('SELECT id FROM cards WHERE threadId = ? AND sourceMessageId = ?').get(threadId, sourceId)
       return json(response, 200, { card: findCard.get(threadId, id) })
     }
@@ -235,8 +243,12 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
     if (job && job.requestId !== requestId) return json(response, 409, { error: '林舟正在回复' })
     if (!job) {
       if (!user) {
+        const firstSend = !db.prepare("SELECT 1 FROM messages WHERE threadId = ? AND role = 'user' LIMIT 1").get(threadId)
         user = { id: randomUUID(), content }
         insert.run(user.id, threadId, 'user', content, requestId, 'pending', sourceCardId ?? null, new Date().toISOString())
+        if (firstSend) analytics.record(key, 'first_send')
+        analytics.record(key, 'send')
+        if (card) analytics.record(key, 'card_send')
       } else {
         status.run('pending', user.id)
       }

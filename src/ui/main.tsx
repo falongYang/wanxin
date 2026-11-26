@@ -109,6 +109,15 @@ function App() {
   const [cardDraft, setCardDraft] = useState<CardDraft | null>(null)
   const [reference, setReference] = useState<Card | null>(null)
   const [notice, setNotice] = useState('')
+  const [editingCard, setEditingCard] = useState(false)
+  const originalCard = useRef<CardDraft | null>(null)
+  const [sourceTarget, setSourceTarget] = useState<string | null>(null)
+  const [highlighted, setHighlighted] = useState<string | null>(null)
+  const [messageMenu, setMessageMenu] = useState<string | null>(null)
+  const menuMessage = useRef<string | null>(null)
+  const restoreMessageFocus = useRef(false)
+  const menuPanel = useRef<HTMLDivElement>(null)
+  const menuTrigger = useRef<HTMLButtonElement | null>(null)
   const input = useRef<HTMLTextAreaElement>(null)
   const bottom = useRef<HTMLDivElement>(null)
   const sending = useRef(false)
@@ -125,7 +134,57 @@ function App() {
   }
 
   useEffect(() => { void load() }, [])
-  useEffect(() => { bottom.current?.scrollIntoView({ block: 'end' }) }, [messages, screen, busy])
+  useEffect(() => {
+    if (screen !== 'chat') return
+    if (sourceTarget) {
+      const element = document.getElementById('message-' + sourceTarget)
+      if (element) {
+        element.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+        element.focus({ preventScroll: true })
+        setHighlighted(sourceTarget)
+      } else setNotice('这段来源消息暂时不在可用记录中，无法定位。')
+      setSourceTarget(null)
+    } else if (!highlighted) bottom.current?.scrollIntoView({ block: 'end' })
+  }, [messages, screen, busy, sourceTarget])
+  useEffect(() => {
+    if (!highlighted) return
+    const timer = window.setTimeout(() => setHighlighted(null), 3200)
+    return () => window.clearTimeout(timer)
+  }, [highlighted])
+  useEffect(() => {
+    if (screen === 'card') document.getElementById('card-heading')?.focus()
+    if (screen === 'chat' && !busy && restoreMessageFocus.current && menuMessage.current) {
+      document.getElementById('message-' + menuMessage.current)?.querySelector<HTMLButtonElement>('.message-trigger')?.focus()
+      restoreMessageFocus.current = false
+    }
+  }, [screen, busy])
+
+  function closeMessageMenu(restoreFocus = false) {
+    setMessageMenu(null)
+    if (restoreFocus) menuTrigger.current?.focus()
+  }
+
+  useEffect(() => {
+    if (!messageMenu) return
+    menuPanel.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus()
+    function outside(event: PointerEvent) {
+      if (!menuPanel.current?.contains(event.target as Node) && !menuTrigger.current?.contains(event.target as Node)) closeMessageMenu()
+    }
+    function keyboard(event: KeyboardEvent) {
+      if (event.key === 'Escape') { event.preventDefault(); closeMessageMenu(true) }
+      if (event.key === 'Tab') closeMessageMenu()
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        menuPanel.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus()
+      }
+    }
+    document.addEventListener('pointerdown', outside)
+    document.addEventListener('keydown', keyboard)
+    return () => {
+      document.removeEventListener('pointerdown', outside)
+      document.removeEventListener('keydown', keyboard)
+    }
+  }, [messageMenu])
 
   async function confirmAge() {
     setBusy(true)
@@ -141,7 +200,8 @@ function App() {
     }
   }
 
-  async function openChat() {
+  async function openChat(sourceMessageId?: string) {
+    closeMessageMenu()
     setBusy(true)
     setError('')
     try {
@@ -157,9 +217,14 @@ function App() {
         }
       }
       setMessages(restored)
+      setNotice('')
+      setHighlighted(null)
+      setSourceTarget(sourceMessageId ?? null)
       setScreen('chat')
+      return true
     } catch {
       setError('暂时无法打开聊天，请重试。')
+      return false
     } finally {
       setBusy(false)
     }
@@ -171,6 +236,7 @@ function App() {
     setBusy(true)
     setError('')
     setFailed(null)
+    setHighlighted(null)
     setMessages(previous => previous.some(message => message.requestId === submission.requestId) ? previous : [
       ...previous,
       { id: submission.requestId, role: 'user', content: submission.text, requestId: submission.requestId, status: 'pending' },
@@ -252,6 +318,7 @@ function App() {
       createdAt: new Date().toISOString(),
       sourceContent: message.content,
     }
+    setEditingCard(true)
     setCardDraft(fallback)
     setScreen('card')
     try {
@@ -270,8 +337,29 @@ function App() {
       const result = await api<{ card: Card }>(id ? 'cards/' + id : 'cards',
         { title, body, sourceMessageId }, id ? 'PATCH' : 'POST')
       setCardDraft({ ...result.card, sourceContent: result.card.sourceContent ?? '' })
+      setEditingCard(false)
       setNotice(id ? '已保存修改' : '已存入共同经历')
     })
+  }
+
+  async function continueFromCard() {
+    if (!cardDraft?.id) return
+    await cardAction(async () => {
+      const result = await api<{ card: Card }>('cards/' + cardDraft.id)
+      if (await openChat()) {
+        setReference(result.card)
+        input.current?.focus()
+      }
+    })
+  }
+
+  async function leaveCard() {
+    if (screen === 'card' && cardDraft?.id) await cardAction(showCards)
+    else if (screen === 'cards' && returnFromCards === 'discover') setScreen('discover')
+    else {
+      restoreMessageFocus.current = screen === 'card'
+      if (await openChat()) setCardDraft(null)
+    }
   }
 
   async function clearSession() {
@@ -303,7 +391,7 @@ function App() {
           <button type="button" disabled={busy} onClick={() => void clearSession()}>清除会话</button>
         </details>
       </header>
-      <section className="history" aria-label="聊天记录">
+      <section className="history" aria-label="聊天记录"><p className="history-intro">深夜电台 · 想说的话，这里都听得到</p>
         <details className="history-drawer">
           <summary>搜索聊天记录</summary>
           <input type="search" aria-label="搜索聊天记录" value={search} onChange={event => setSearch(event.target.value)} />
@@ -318,16 +406,29 @@ function App() {
             )}
           </ul>}
         </details>
-        {messages.map(message => <div id={'message-' + message.id} tabIndex={-1} className={'bubble ' + message.role} key={message.id}>
+        {messages.map(message => <div id={'message-' + message.id} tabIndex={-1} className={'bubble ' + message.role + (highlighted === message.id ? ' source-highlight' : '')} key={message.id}>
           {message.content}
-          {message.status === 'complete' && <button type="button" disabled={busy}
-            onClick={() => void cardAction(() => previewCard(message))}>做成经历卡</button>}
+          {message.role === 'user' && message.status === 'complete' && <div className="message-tools">
+            <button type="button" className="message-trigger" aria-label="消息操作" aria-haspopup="menu"
+              aria-expanded={messageMenu === message.id} aria-controls={messageMenu === message.id ? 'message-menu' : undefined}
+              disabled={busy} onClick={event => {
+                menuMessage.current = message.id
+                menuTrigger.current = event.currentTarget
+                setMessageMenu(messageMenu === message.id ? null : message.id)
+              }}>···</button>
+            {messageMenu === message.id && <div className="message-popover" id="message-menu" role="menu" aria-label="消息操作" ref={menuPanel}>
+              <button type="button" role="menuitem" onClick={() => {
+                closeMessageMenu()
+                void cardAction(() => previewCard(message))
+              }}>做成经历卡</button>
+            </div>}
+          </div>}
           {message.role === 'user' && message.status !== 'complete' && message.requestId && !busy &&
             <button type="button" onClick={() => void send(failed?.requestId === message.requestId ? failed : { requestId: message.requestId!, text: message.content, sourceCardId: message.sourceCardId })}>重试</button>}
         </div>)}
         {(busy || failed || messages.at(-1)?.role === 'assistant') && <details className="activity">
           <summary role="status">{busy ? '正在处理' : failed ? '回复失败' : '回复已收到'}</summary>
-          <p>{busy ? '正在等待当前操作完成。' : failed ? '可以在原消息下重试。' : '林舟已回复当前消息。'}</p>
+          <p>{busy ? (sending.current ? '林舟正在回复…' : '正在打开…') : failed ? '可以在原消息下重试。' : '林舟已回复当前消息。'}</p>
         </details>}
         <div ref={bottom} />
       </section>
@@ -336,6 +437,7 @@ function App() {
           {suggestions.map(([label, text]) => <button key={label} type="button" onClick={() => { setDraft(text); input.current?.focus() }}>{label}</button>)}
         </div>}
         {error && <p role="alert">{error}</p>}
+        {notice && <p role="status">{notice}</p>}
         {reference && <div className="reference">
           <span>引用：{reference.title}</span>
           <button type="button" disabled={busy} onClick={() => {
@@ -378,19 +480,16 @@ function App() {
       </div>
     </> : screen === 'cards' || screen === 'card' ? <section className="album">
       <header className="album-actions">
-        <button disabled={busy} onClick={() => {
-          if (screen === 'card' && cardDraft?.id) void cardAction(showCards)
-          else if (screen === 'cards' && returnFromCards === 'discover') setScreen('discover')
-          else void openChat()
-        }}>{screen === 'card' && !cardDraft?.id ? '取消预览' : '返回'}</button>
-        <h1>{screen === 'cards' ? '共同经历' : cardDraft?.id ? '经历卡' : '预览经历卡'}</h1>
+        <button className="secondary" disabled={busy} onClick={() => void leaveCard()}>{screen === 'card' && !cardDraft?.id ? '取消预览' : '返回'}</button>
+        <h1 id="card-heading" tabIndex={-1}>{screen === 'cards' ? '共同经历' : cardDraft?.id ? '经历卡' : '预览经历卡'}</h1>
       </header>
       {screen === 'cards' && <>
-        {cards.length === 0 && <p>聊天时，选择想留下的消息做成经历卡。</p>}
+        {cards.length === 0 && <p className="muted">这里会收好你与林舟的片段。<br />回到聊天，选择想留下的消息做成经历卡。</p>}
         {cards.map(card => <button className="card-list-item" key={card.id} disabled={busy}
           onClick={() => void cardAction(async () => {
             const result = await api<{ card: Card }>('cards/' + card.id)
             setCardDraft({ ...result.card, sourceContent: result.card.sourceContent ?? '' })
+            setEditingCard(false)
             setScreen('card')
           })}>
           <strong><span className="lantern" aria-hidden="true" />{card.title}</strong><small>{new Date(card.createdAt).toLocaleDateString('zh-CN')}</small>
@@ -399,25 +498,34 @@ function App() {
       </>}
       {screen === 'card' && cardDraft && <form className="card-form" onSubmit={saveCard}>
         <small>{new Date(cardDraft.createdAt).toLocaleDateString('zh-CN')}</small>
-        <label>标题<input required maxLength={60} disabled={busy} value={cardDraft.title}
+        {editingCard ? <><label>标题<input required maxLength={60} disabled={busy} value={cardDraft.title}
           onChange={event => setCardDraft({ ...cardDraft, title: event.target.value })} /></label>
         <label>正文<textarea required maxLength={1000} rows={4} disabled={busy} value={cardDraft.body}
           onChange={event => setCardDraft({ ...cardDraft, body: event.target.value })} /></label>
-        <details><summary>查看来源</summary><p>{cardDraft.sourceContent}</p></details>
+        </> : <><p className="scene">与你 · 共同经历</p><h2>{cardDraft.title}</h2><p className="letter-body">{cardDraft.body}</p></>}
+        <details><summary>来源原文</summary><p>{cardDraft.sourceContent || '来源原文暂不可用。'}</p></details>
         <div className="album-actions">
-          <button type="submit" disabled={busy || !cardDraft.title.trim() || !cardDraft.body.trim()}>
+          {editingCard && <button type="submit" disabled={busy || !cardDraft.title.trim() || !cardDraft.body.trim()}>
             {cardDraft.id ? '保存修改' : '收藏'}
-          </button>
-          {cardDraft.id && <>
-            <button type="button" disabled={busy} onClick={() => {
-              setReference({ ...cardDraft, id: cardDraft.id! })
-              void openChat()
-            }}>从这里继续聊</button>
-            <button type="button" disabled={busy} onClick={() => {
+          </button>}
+          {editingCard && cardDraft.id && <button type="button" className="secondary" disabled={busy} onClick={() => {
+            setCardDraft(originalCard.current)
+            setEditingCard(false)
+          }}>取消修改</button>}
+          {!editingCard && <button type="button" className="secondary" disabled={busy} onClick={() => void openChat(cardDraft.sourceMessageId)}>查看来源</button>}
+          {!editingCard && cardDraft.id && <button type="button" className="secondary" disabled={busy} onClick={() => {
+            originalCard.current = { ...cardDraft }
+            setEditingCard(true)
+            window.requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.card-form input')?.focus())
+          }}>编辑</button>}
+          {cardDraft.id && !editingCard && <>
+            <button type="button" disabled={busy} onClick={() => void continueFromCard()}>从这里继续聊</button>
+            <button type="button" className="secondary" disabled={busy} onClick={() => {
               if (!window.confirm('删除这张经历卡？')) return
               void cardAction(async () => {
                 await api('cards/' + cardDraft.id, undefined, 'DELETE')
                 if (reference?.id === cardDraft.id) setReference(null)
+                setCardDraft(null)
                 await showCards()
               })
             }}>删除卡片</button>
@@ -427,7 +535,7 @@ function App() {
       {notice && <p role="status">{notice}</p>}
       {error && <p role="alert">{error}</p>}
     </section> : <>
-      <div className="brand">晚信</div>
+      <div className="brand">晚信<small>把今晚，慢慢说给我听</small></div>
       {screen === 'loading' && (error ? <button onClick={() => void load()}>重试</button> : <p role="status">正在打开晚信…</p>)}
       {screen === 'gate' && <section className="intro">
         <h1>欢迎来到晚信</h1><p>晚信面向成年人。你将与 AI 虚构角色对话。</p>
@@ -441,6 +549,7 @@ function App() {
         {weatherAvailable && <Weather city={city} selectCity={setCity} />}
         <div className="foyer" ref={foyer}>
           <article>
+            <div className="radio-scene" aria-hidden="true"><span>海边 · 深夜电台</span></div>
             <p className="scene">深夜电台</p><h1>林舟</h1>
             <small>AI 虚构角色</small><p>在海边值夜班的电台主播</p>
             <blockquote>今晚的节目还没开始。你想先点一首歌，还是说说今天？</blockquote>
