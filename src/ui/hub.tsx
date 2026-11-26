@@ -145,6 +145,14 @@ function momentTime(iso: string) {
   return date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
+function dayLabel(iso: string) {
+  const date = new Date(iso)
+  if (!Number.isFinite(date.getTime())) return '某一天'
+  const sameDay = (value: Date) => value.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' }) === new Date().toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' })
+  if (sameDay(date)) return '今天'
+  return date.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai', month: 'long', day: 'numeric' })
+}
+
 export function MomentsScreen({ api, onError, character, avatar }: { api: Api; onError: FeatureError; character: Character | null; avatar?: ReactNode }) {
   const [moments, setMoments] = useState<Moment[]>([])
   const [draft, setDraft] = useState('')
@@ -226,8 +234,17 @@ export function MomentsScreen({ api, onError, character, avatar }: { api: Api; o
     </div>
     {notice && <p role="status">{notice}</p>}
     {!moments.length && <p className="muted moments-empty">还没有动态。留下一句，或者让TA先说。</p>}
-    <ol className="moment-list">
-      {moments.map(moment => <li key={moment.id} className={'moment ' + moment.author}>
+    <div className="moment-groups">
+      {moments.reduce<{ day: string; items: Moment[] }[]>((groups, moment) => {
+        const day = dayLabel(moment.createdAt)
+        const last = groups.at(-1)
+        if (last && last.day === day) last.items.push(moment)
+        else groups.push({ day, items: [moment] })
+        return groups
+      }, []).map(group => <section className="moment-day" key={group.day} aria-label={group.day}>
+        <h3>{group.day}</h3>
+        <ol className="moment-list">
+          {group.items.map(moment => <li key={moment.id} className={'moment ' + moment.author}>
         <div className="moment-head">
           {avatar && moment.author === 'character' && <span className="moment-avatar" aria-hidden="true">{avatar}</span>}
           <strong>{moment.author === 'character' ? (character?.name ?? 'TA') : '我'}</strong>
@@ -249,7 +266,9 @@ export function MomentsScreen({ api, onError, character, avatar }: { api: Api; o
             onChange={event => setCommentDraft(event.target.value)} />
           <button type="submit" disabled={!commentDraft.trim()}>发送</button>
         </form>}
-      </li>)}
-    </ol>
+        </li>)}
+        </ol>
+      </section>)}
+    </div>
   </section>
 }

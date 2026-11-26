@@ -654,9 +654,12 @@ function App() {
         </form>
       </div>
     </> : screen === 'cards' || screen === 'card' ? <section className="album">
-      <header className="album-actions">
+      <header className={screen === 'cards' ? 'album-actions with-eyebrow' : 'album-actions'}>
         <button className="secondary" disabled={busy} onClick={() => void leaveCard()}>{screen === 'card' && !cardDraft?.id ? '取消预览' : '返回'}</button>
-        <h1 id="card-heading" tabIndex={-1}>{screen === 'cards' ? '共同经历' : cardDraft?.id ? '经历卡' : '预览经历卡'}</h1>
+        <div className="eyebrow-block">
+          {screen === 'cards' && <p className="eyebrow">河灯航程</p>}
+          <h1 id="card-heading" tabIndex={-1}>{screen === 'cards' ? '共同经历' : cardDraft?.id ? '经历卡' : '预览经历卡'}</h1>
+        </div>
       </header>
       {screen === 'cards' && <>
         <div className="card-search">
@@ -736,7 +739,7 @@ function App() {
       {error && <p role="alert">{error}</p>}
       {showAdmission && <button type="button" onClick={() => setScreen('gate')}>重新确认邀请</button>}
     </section> : <>
-      <div className="brand">晚信<small>把今晚，慢慢说给我听</small></div>
+      <div className="brand"><span className="brand-mark">晚信<svg className="brand-moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" /></svg></span><small>把今晚，慢慢说给我听</small></div>
       {screen === 'loading' && (error ? <button onClick={() => void load()}>重试</button> : <p role="status">正在打开晚信…</p>)}
       {screen === 'gate' && <section className="intro">
         <h1>欢迎来到晚信</h1><p>晚信面向成年人。你将与 AI 虚构角色对话。</p>
@@ -744,11 +747,13 @@ function App() {
           <legend>选择今晚想见的人</legend>
           {characters.map(item => <label key={item.id} className={'character-option' + (pickedId === item.id ? ' active' : '')}>
             <input type="radio" name="character" checked={pickedId === item.id} onChange={() => setPickedId(item.id)} />
-            <strong>{item.name}</strong><span>{item.scene}</span>
+            <span className="pick-avatar" aria-hidden="true"><Avatar config={CHARACTER_DEFAULT_AVATAR[item.id] ?? FALLBACK_AVATAR} size={44} /></span>
+            <span className="pick-text"><strong>{item.name}</strong><small>{item.scene}</small></span>
+            <span className="pick-dot" aria-hidden="true" />
           </label>)}
         </fieldset>}
-        {accessRequired && <label className="invite-input">邀请码<input type="password" aria-label="邀请码" autoComplete="off" maxLength={256}
-          value={inviteToken} onChange={event => setInviteToken(event.target.value)} /></label>}
+        {accessRequired && <label className="invite-input">邀请码<span className="invite-field"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2.5" /><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" /></svg><input type="password" aria-label="邀请码" autoComplete="off" maxLength={256}
+          value={inviteToken} onChange={event => setInviteToken(event.target.value)} placeholder="只可兑换一次" /></span></label>}
         {accessRequired && <p className="footnote">邀请码仅可兑换一次。清除会话或丢失浏览器身份后，请联系邀请人补发。</p>}
         <button disabled={busy || (accessRequired && !inviteToken.trim())} onClick={() => void confirmAge()}>我已年满 18 岁</button>
       </section>}

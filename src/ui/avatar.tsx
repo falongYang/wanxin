@@ -146,6 +146,7 @@ export function AvatarScreen({ api, onError, characterId, characterName, onSaved
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
   const [tab, setTab] = useState<keyof typeof AVATAR_OPTIONS>('hair')
+  const [saved, setSaved] = useState(false)
 
   useEffect(() => {
     void api<{ config: Partial<AvatarConfig> | null }>('avatar').then(({ config }) => {
@@ -160,6 +161,8 @@ export function AvatarScreen({ api, onError, characterId, characterName, onSaved
     try {
       await api('avatar', { config }, 'PUT')
       onSaved?.(config)
+      setSaved(true)
+      window.setTimeout(() => setSaved(false), 1000)
       setNotice('形象已保存，TA换上了新样子。')
     } catch { onError('保存失败，请重试。') } finally { setBusy(false) }
   }
@@ -189,7 +192,7 @@ export function AvatarScreen({ api, onError, characterId, characterName, onSaved
       {onClose && <button type="button" className="secondary" onClick={onClose}>返回</button>}
       <h1>捏一捏 · {characterName}</h1>
     </header>
-    <div className="avatar-stage">
+    <div className={'avatar-stage' + (saved ? ' saved' : '')}>
       <Avatar config={config} size={168} glow />
       <div className="avatar-tabs">
         {(Object.keys(AVATAR_OPTIONS) as (keyof typeof AVATAR_OPTIONS)[]).map(key =>
