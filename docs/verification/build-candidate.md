@@ -1,42 +1,35 @@
-# 共同经历搜索版本：可复现候选记录
+# 远端功能合并后的候选验证
 
-2026-11-26，未提交工作树候选，待项目经理复核。HEAD仅是基点，不代表本轮制品版本；未部署/提交/推送。
+2026-11-26，整合本地94e92f6与本地origin/main=6bc851730281d678ee8f6a6afb8792f0dda286df。用户经项目经理明确授权合并提交与普通GitHub推送，本轮不部署。
 
-此前#6验收保留为 [历史记录](build-candidate-2026-11-26-pre-library.md) 与 [历史JSON](build-candidate-2026-11-26-pre-library.json)，旧摘要不用于本轮。当前记录完整清单见 [build-candidate.json](build-candidate.json)。
+本JSON在合并提交之前生成，baseCommit=94e92f6b2532c176bc501b61e8cb380a5c4e7271仅为本地基点；记录的是已验证合并工作树的内容，不冒称该基点制品。完成提交后用相同源码摘要复核绑定，最终提交及实际远端结果记录在委派交付回执，避免提交文件递归引用自身提交号。
 
-| 项目 | 本轮 |
+| 项目 | 记录 |
 | --- | --- |
-| 基点 | b2e6943e0c4c0fd8f9abd0a05241590b13d86605 |
-| 工作树源码SHA-256 | `e5ff987aec71baf709711e22e60b92d852e4aa1be990beac737dd078d5b2b9db` |
-| 文件数 | 52 |
-| 产物集合SHA-256 | `e6e1602886132ab5698f2feec746c4e8efa933fbcd79a71e456637193b927b80` |
-| 环境 | macOS26.6 / darwin arm64；Node22.23.5/npm10.9.9 |
-| 隔离验证 | 新副本npm ci成功，34/34测试、构建及重复构建通过，产物逐文件一致 |
+| 源码文件数 | 54 |
+| 源码SHA256 | `f6942bdf1d8b7d99230403d30bbe01732bf4dc3e5f2f0911887c59acec853cd2` |
+| 产物集合SHA256 | `14ee8eb14d1c1bec26356ada18f5367328e06c947a1afa9a04d2cefb23bae4a3` |
+| 环境 | macOS26.6 arm64 / Node22.23.5 / npm10.9.9 |
+| 隔离验证 | npm ci成功、35/35测试、两次构建成功且产物一致 |
 
-| 产物 | 字节 | SHA-256 |
+| 产物 | 字节 | SHA256 |
 | --- | ---: | --- |
-| assets/index-ByW0XnjC.js | 207579 | `60b58aa8ad245caba0fa619c087f7ad2b8dd6f59b08b85343b15867b386a733b` |
-| assets/index-CcwKMWVA.css | 12680 | `04dfbe1dbee2b29c8f83d81afb7a294204c06db3658ec914b8f8fd83431a16de` |
-| index.html | 368 | `a5c160d3b7287a96806d6091a1a0c1fc40ea819b69650c9995fd49b9224a96bc` |
+| assets/index-Bt-zOg4T.js | 208763 | `e86d0d8e8dc9b23b9f5d621f31ae3c2d4cdcd61d4a56c1bba1d6c3ba0b6a746a` |
+| assets/index-D0yuzwod.css | 13748 | `dfe4df13bcca4d2ce97e180207332502f31877f2b0964b93eb8f32f623a78dd4` |
+| index.html | 368 | `5d5af4ed8a4be1e7862ec5f57c6a311134312a2f51c346f6a6aa21a26e796f88` |
 
-当前临时副本：`/var/folders/lt/f7xdn9m95_zg7qh03bx5prjm0000gn/T/wanxin-library-0ra5o2be/work-final`。原工作树与副本分别按JSON核验通过。共享node_modules/dist、已有数据库与服务未动；不读真实.env，不新增依赖或代理/QA调用。
+逐文件记录见 [JSON](build-candidate.json)，合并前候选保留为 [历史记录](build-candidate-2026-11-26-pre-merge.md) 与 [历史JSON](build-candidate-2026-11-26-pre-merge.json)，原#6历史也保留。清单含新增合并说明/界面脚本；验证输出不入自身源码摘要。基点/提交/平台元数据不是源码摘要的一部分。
 
-源码规则与新副本复建命令见 [构建说明](../build-candidate.md)。本轮增加的JS helper、类型声明、聚焦测试、浏览器脚本、设计文档已入白名单，清单脚本自身仍在源码摘要中；所有验证输出/截图排除于源码集合之外。两次构建一致仅证明同环境重复构建，不承诺跨平台位级一致；checksum不代表来源签名。
+## 已核验
 
-[共同经历实现与三视口截图](card-library.md)记录中文/英文/空白搜索、上海月界、稳定排序、详情返回、编辑/删除、错误焦点及准入、续聊/来源与隐私断言。静态真实构建资产+合成HTTP，不证明后端/真实模型/HTTPS完整链路；受控邀请UI回归也通过。
+- main/style逐段合并，保留抽屉搜索/置顶定位、活动说明/状态、失败队列重试，以及准入/额度/日志、共同经历搜索分组与返回焦点。河灯容器保留在各月份分组内。
+- pins的PUT/DELETE在Origin/JSON、邀请与端点频率检查之后，消息所有权再次限制；受控回归覆盖未准入/撤销、跨访客、重复置顶/取消、清除级联，不触发模型/不增加调用额度。日志pins类别无原消息ID。
+- 外部临时副本按锁安装、35项测试/构建通过；重复构建产物逐字节一致，副本与原工作树均candidate_verified。没有使用共享node_modules/dist或已有库。
+- verify-merged-ui三视口通过抽屉搜索、置顶、原消息定位、活动说明、河灯月份、返回查询焦点、置顶403恢复且无自动模型发送；verify-card-library及verify-access-ui也通过。
+- 三套界面检查均为真实隔离构建资产+合成HTTP，不证明真实模型/后端全链路。无真实.env或既有数据库读取，无服务启动替换、新代理/QA调用或部署。
 
-## 精简owner输入与三闸门
+## 仍待环境验收
 
-- 目标域名/HTTPS/PUBLIC_ORIGIN、可信代理及覆盖头、服务账号/持久卷、备份RPO/RTO与恢复责任人。
-- 受邀人数/有效期/补发责任人、次数/速率/时区、供应商硬上限/停止责任人、控制数据/日志保留和查看权限。
-- 真实模型协议/型号/数据政策与安全注入引用、告警接收人；不要提供密钥值。
-- owner真机设备/系统/浏览器与验收时间，及同一具体版本的群内授权。
+生产阈值/保留、HTTPS/PUBLIC_ORIGIN及可信代理、真实模型/费用/取消、目标持久化备份、真机/Safari与最终三闸门保持待验。GitHub推送授权不等于生产部署批准。源码再变需重新绑定候选。
 
-| 最终登记 | 状态/待补 |
-| --- | --- |
-| PM双视口+候选哈希 | 待PM核对同一候选、尺寸、截图、验收人/时间/结论；本轮三视口为合成HTTP证据 |
-| owner真机 | 待同一候选、设备/系统/浏览器、软键盘/安全区完整流程、时间与结论 |
-| owner群内点名 | 待授权原文位置、时间、明确同一具体版本/摘要 |
-| 生产环境/真实模型 | 参数/保留未批准，真实取消/费用、目标HTTPS与备份恢复未验证 |
-
-任一源码/锁/模板变化都需新候选与受影响证据复验；后续若提交，重新绑定提交标识，不能将工作树快照直接称为原HEAD发布版。三闸门未齐不发布。
+本机临时副本：`/var/folders/lt/f7xdn9m95_zg7qh03bx5prjm0000gn/T/wanxin-merge-bdzv36lq/work`；可按docs/build-candidate.md重建。合并说明与截图索引见 [合并记录](merge-integration.md)。

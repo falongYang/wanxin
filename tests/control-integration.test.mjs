@@ -173,3 +173,47 @@ test('有消息卡片和匿名事件的旧库增表兼容，受控模式不继�
   assert.equal(admitted.status, 200)
   assert.deepEqual((await request('cards', null, admitted.cookie)).json().cards, [])
 })
+
+test('合并后的pins覆盖准入、Origin、所有权、幂等及清除，不绕过或消耗模型额度', async t => {
+  const f = fixture(t)
+  const otherToken = 'e'.repeat(64)
+  const otherInvite = { ...f.invite, tokenId: 'other-pin', subjectId: 'other-pin', digest: digest(otherToken) }
+  f.save([f.invite, otherInvite])
+  const db = new DatabaseSync(f.env.SQLITE_PATH)
+  f.after(() => db.close())
+  const lines = []
+  let calls = 0
+  const app = createApp(f.env.SQLITE_PATH, async () => { calls++; return 'SYNTHETIC_PIN_REPLY' },
+    { access: f.policy, clock: () => new Date('2026-11-26T00:00:00Z'), logger: line => lines.push(line) })
+  f.after(() => app.emit('close'))
+  const request = makeClient(app)
+  const cookie = (await request('session', { adult: true, inviteToken: f.token })).cookie
+  const other = (await request('session', { adult: true, inviteToken: otherToken })).cookie
+  db.exec('UPDATE runtime_control SET callsEnabled=1')
+  const sent = await request('messages', { requestId: 'pin-check', text: 'SYNTHETIC_PIN_BODY' }, cookie)
+  const reply = sent.json().messages.at(-1)
+  assert.equal(reply.contextCount, 1)
+  const path = 'pins/' + reply.id
+  assert.equal((await request(path, null, null, 'PUT')).status, 403)
+  assert.equal((await request(path, null, cookie, 'PUT', { origin: 'https://evil.example' })).status, 403)
+  assert.equal((await request(path, null, cookie, 'PUT', { 'content-type': 'text/plain' })).status, 415)
+  assert.equal((await request(path, null, other, 'PUT')).status, 404)
+  assert.equal((await request(path, null, cookie, 'PUT')).status, 200)
+  assert.equal((await request(path, null, cookie, 'PUT')).status, 200)
+  assert.equal(db.prepare('SELECT count(*) n FROM message_pins').get().n, 1)
+  assert.equal((await request(path, null, other, 'DELETE')).status, 404)
+  assert.equal((await request(path, null, cookie, 'DELETE')).status, 200)
+  assert.equal((await request('thread', null, cookie)).json().messages.at(-1).pinned, 0)
+  await request(path, null, cookie, 'PUT')
+  f.save([{ ...f.invite, enabled: false }, otherInvite])
+  assert.equal((await request(path, null, cookie, 'PUT')).status, 403)
+  assert.equal((await request(path, null, cookie, 'DELETE')).status, 403)
+  assert.equal((await request('session', null, cookie, 'DELETE')).status, 200)
+  assert.equal(db.prepare('SELECT count(*) n FROM message_pins').get().n, 0)
+  assert.equal(db.prepare('SELECT count(*) n FROM reply_activity').get().n, 0)
+  assert.equal(db.prepare("SELECT used FROM call_daily WHERE scope='global'").get().used, 1)
+  assert.equal(calls, 1)
+  assert.ok(lines.some(line => { const row = JSON.parse(line); return row.route === 'pins' && row.status === 403 }))
+  assert.ok(!lines.join('').includes('SYNTHETIC_PIN'))
+  assert.ok(!lines.join('').includes(reply.id))
+})

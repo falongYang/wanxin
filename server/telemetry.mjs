@@ -1,6 +1,6 @@
 import { ControlError } from './access.mjs'
 const events = new Set(['startup', 'request', 'model_success', 'model_error', 'model_timeout', 'control_error'])
-const routes = new Set(['session', 'messages', 'preview', 'cards', 'thread', 'weather', 'other'])
+const routes = new Set(['session', 'messages', 'preview', 'cards', 'thread', 'weather', 'pins', 'other'])
 const codes = new Set(['origin_denied', 'json_required', 'invitation_required', 'access_unavailable', 'proxy_denied',
   'clock_unavailable', 'calls_stopped', 'capacity_limit', 'rate_limited', 'daily_limit', 'operation_denied', 'log_unavailable'])
 export function createTelemetry(sink = line => process.stdout.write(line + '\n')) {
@@ -26,6 +26,7 @@ export function routeCategory(url) {
   if (url === '/api/messages') return 'messages'
   if (url === '/api/card-preview') return 'preview'
   if (/^\/api\/cards(?:\/[^/]+)?$/.test(url)) return 'cards'
+  if (/^\/api\/pins\/[^/]+$/.test(url)) return 'pins'
   if (url === '/api/thread') return 'thread'
   if (url.startsWith('/api/weather/')) return 'weather'
   return 'other'
