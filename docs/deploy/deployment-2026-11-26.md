@@ -112,4 +112,23 @@
 - 回滚：部署前备份至 `/var/www/_rollback_wanxin_20261126-222551/`，指针 `/var/www/_last_wanxin_backup`。
 - 邀请消耗：本附录验收消耗 trial-005、trial-006；**token-007 为最后一张未用邀请**。
 
+## 附录 · 阶段 8 交互细节打磨（同日第五次发版）
+
+以新增 2 张设计稿（`docs/design/stage7/`：门页 gate.png、共同经历 cards.png）为基准做细节打磨，纯前端发版（server 目录未改动），本地提交 e98c6be：
+
+- **门页角色选择卡**：欢迎页由单角色直进改为「选择今晚想见的人」三卡并列（林舟/顾川/孙晚），每卡带默认形象头像、场景副标题与金色单选指示，默认选中林舟；品牌区新增月牙装饰（夜航 opacity .85 / 晨间 .55），slogan 对比度提至 88%（`color-mix muted/text`），选择区图例修正 3px 基线偏移；invitation 模式下邀请码为玻璃胶囊输入框（锁形图标 + 密码态 + 「仅可兑换一次」脚注），dev 模式不显示（`accessRequired=false`）。
+- **朋友圈按天分组**：动态由平铺改为按日聚合，组标题（今天/具体日期）左右渐隐细线；dev 实测「今天」组渲染正常。
+- **共同经历页精修**：header 加眉标「河灯航程」；信笺卡奇偶微倾斜（-0.7°/+0.5°）叠纸层次阴影，hover 归正。
+- **捏捏保存动效**：保存成功后形象舞台播放 savedPulse 呼吸缩放；reduced-motion 全局规则覆盖。
+- **对比度**：我的页脚注（me-foot）由 --faint 提亮为 --muted。
+
+验证（2026-11-26 23:45 前后）：
+
+- 本地：`npm test` 64/64；`npm run build` 产物 `index-CwJuMOF7.js` / `index-NsJWpXlE.css`；阶段 8 验证截图 `docs/verification/stage8-design/`（门页夜航/晨间/320 三视口 + 朋友圈/共同经历/我的 390），并经视觉模型验收（三卡协调、选中态与月牙正常、无排版错位）。
+- dev 实测：门页三卡选择→过门→玄关、朋友圈「今天」分组、共同经历眉标+倾斜信笺卡、捏捏保存动效（computed animationName=savedPulse）逐项通过；期间用「清除会话」路径验证了门页在不刷新下的主题保持。
+- 线上：静态产物 SHA-256 与本地逐字节一致（index.html `20de594e…`、JS `492f569b…`、CSS `7d586afe…`）；`sudo service wanxin restart` 后页面 200 并引用 `index-CwJuMOF7.js`，静态资源 200；未认证 `POST /api/session` 正确 403；线上 JS 含新门页组件标记（invite-field/选择今晚想见的人）。
+- 浏览器直开生产页受本机浏览器拦截裸 IP HTTP 导航限制（ERR_BLOCKED_BY_CLIENT），改用 curl 完成线上验收，功能与安全行为均已确认。
+- 回滚：部署前备份至 `/var/www/_rollback_wanxin_20261126-234544/`（frontend），指针 `/var/www/_last_wanxin_backup`。
+- 邀请消耗：本次发版未消耗邀请令牌；**token-007 仍为最后一张未用邀请**。
+
 > AI生成
