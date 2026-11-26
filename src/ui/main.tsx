@@ -1,4 +1,5 @@
 import { groupCards } from './card-library.js'
+import { MeScreen, BondBar, type Bond } from './hub'
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -136,7 +137,7 @@ function ReplyActivity({ message, name = '角色' }: { message: Message; name?: 
 }
 
 function App() {
-  const [screen, setScreen] = useState<'loading' | 'gate' | 'discover' | 'chat' | 'cards' | 'card'>('loading')
+  const [screen, setScreen] = useState<'loading' | 'gate' | 'discover' | 'chat' | 'cards' | 'card' | 'me'>('loading')
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
   const [queue, setQueue] = useState<QueuedMessage[]>([])
@@ -178,6 +179,11 @@ function App() {
   const bottom = useRef<HTMLDivElement>(null)
   const sending = useRef(false)
   const [listening, setListening] = useState(false)
+  const [bond, setBond] = useState<Bond | null>(null)
+  useEffect(() => {
+    if (screen !== 'discover' && screen !== 'me') return
+    void api<Bond>('bond').then(setBond).catch(() => {})
+  }, [screen])
 
   async function load() {
     setError('')
@@ -722,6 +728,7 @@ function App() {
             <p className="scene">{character?.scene?.split('·')[0].trim() ?? '深夜'}</p><h1>{character?.name ?? '角色'}</h1>
             <small>AI 虚构角色</small><p>{character?.intro ?? ''}</p>
             <blockquote>{character?.opening ?? ''}</blockquote>
+            <BondBar bond={bond} compact />
             <button disabled={busy} onClick={() => void openChat()}>和{character?.name ?? '角色'}聊天</button>
           </article>
           <article>
@@ -736,6 +743,11 @@ function App() {
           }}>{label}</button>)}
         </nav>
       </section>}
+      {screen === 'me' && <MeScreen api={api} onError={message => setError(message)} character={character} refreshHome={() => {}} />}
+      {(screen === 'discover' || screen === 'me') && <nav className="tabbar" aria-label="主导航">
+        <button type="button" className={screen === 'discover' ? 'active' : ''} onClick={() => { setError(''); setScreen('discover') }}>玄关</button>
+        <button type="button" className={screen === 'me' ? 'active' : ''} onClick={() => { setError(''); setScreen('me') }}>我的</button>
+      </nav>}
       {error && <p role="alert">{error}</p>}
       {showAdmission && <button type="button" onClick={() => setScreen('gate')}>重新确认邀请</button>}
     </>}

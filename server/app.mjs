@@ -4,6 +4,7 @@ import { acquireInstanceLock } from './instance-lock.mjs'
 import { createAccess, ControlError } from './access.mjs'
 import { createAnalytics } from './analytics.mjs'
 import { characters, defaultCharacterId, characterById, summarizeCharacter } from './characters.js'
+import { createFeatures } from './features.mjs'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { DatabaseSync } from 'node:sqlite'
@@ -84,6 +85,11 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
   const pending = new Map()
   const telemetry = createTelemetry(logger)
   telemetry.emit({ event: 'startup' })
+  const features = createFeatures(db, {
+    authorization, usage, analytics, telemetry, reply,
+    clock, timeoutMs,
+    personaOf: threadId => characterById(threadCharacter.get(threadId)?.characterId)?.persona,
+  })
   const json = (response, status, data) => {
     telemetry.emit({ event: 'request', route: response.controlRoute, status, code: data.code, durationMs: Date.now() - response.controlStarted })
     response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
@@ -314,6 +320,13 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
         return json(response, 503, {})
       }
     }
+    // 陪伴功能路由（羁绊/心情/朋友圈/形象/信箱/愿望/纪念日/礼物/生活服务）
+    if (/^\/api\/(bond|mood|home|moments|avatar|services|letters|anniversaries|wishes|gifts)(\/|$)/.test(url.pathname)) {
+      if (!threadId) return json(response, 403, { error: '请先确认成年' })
+      const featureBody = request.method === 'POST' || request.method === 'PATCH' ? await readBody(request) : null
+      const handled = await features.handle({ method: request.method, url, pathname: url.pathname, body: featureBody, threadId, key })
+      return json(response, handled.status, handled.data)
+    }
     const pinRoute = /^\/api\/pins\/([a-f0-9-]{36})$/.exec(url.pathname)
     const mutatingPin = pinRoute && ['PUT', 'DELETE'].includes(request.method)
     const cardRoute = /^\/api\/cards\/([a-f0-9-]{36})$/.exec(url.pathname)
@@ -383,7 +396,10 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
       const now = new Date().toISOString()
       const saved = db.prepare('INSERT INTO cards VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(threadId, sourceMessageId) DO NOTHING')
         .run(randomUUID(), threadId, sourceId, ...fields, now, now)
-      if (saved.changes) analytics.record(key, 'card_save')
+      if (saved.changes) {
+        analytics.record(key, 'card_save')
+        features.award(threadId, 5)
+      }
       const { id } = db.prepare('SELECT id FROM cards WHERE threadId = ? AND sourceMessageId = ?').get(threadId, sourceId)
       return json(response, 200, { card: findCard.get(threadId, id) })
     }
@@ -402,11 +418,13 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
     if (job && job.requestId !== requestId) return json(response, 409, { error: '林舟正在回复' })
     if (!job) {
       let attempt
+      let fresh = false
       telemetry.ensure()
       usage.transaction(() => {
         const subject = authorization.authorize(key)
         attempt = usage.reserve(subject, authorization.controlled ? authorization.digest(requestId) : requestId)
         if (!user) {
+          fresh = true
           const firstSend = !db.prepare("SELECT 1 FROM messages WHERE threadId = ? AND role = 'user' LIMIT 1").get(threadId)
           user = { id: randomUUID(), content }
           insert.run(user.id, threadId, 'user', content, requestId, 'pending', sourceCardId ?? null, new Date().toISOString())
@@ -415,6 +433,7 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
           if (card) analytics.record(key, 'card_send')
         } else status.run('pending', user.id)
       })
+      if (fresh) features.award(threadId, card ? 3 : 2)
       job = { requestId, started: false, settled: Promise.resolve() }
       pending.set(threadId, job)
       job.result = generate(threadId, user, requestId, card, attempt, job).finally(() => {
