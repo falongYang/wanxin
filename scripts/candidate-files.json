@@ -40,6 +40,7 @@
   "server/telemetry.mjs",
   "server/usage.mjs",
   "server/weather.mjs",
+  "src/ui/avatar.tsx",
   "src/ui/card-library.d.ts",
   "src/ui/card-library.js",
   "src/ui/hub.tsx",

@@ -323,8 +323,9 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
     // 陪伴功能路由（羁绊/心情/朋友圈/形象/信箱/愿望/纪念日/礼物/生活服务）
     if (/^\/api\/(bond|mood|home|moments|avatar|services|letters|anniversaries|wishes|gifts)(\/|$)/.test(url.pathname)) {
       if (!threadId) return json(response, 403, { error: '请先确认成年' })
-      const featureBody = request.method === 'POST' || request.method === 'PATCH' ? await readBody(request) : null
+      const featureBody = ['POST', 'PATCH', 'PUT'].includes(request.method) ? await readBody(request) : null
       const handled = await features.handle({ method: request.method, url, pathname: url.pathname, body: featureBody, threadId, key })
+      if (!handled) return json(response, 404, {})
       return json(response, handled.status, handled.data)
     }
     const pinRoute = /^\/api\/pins\/([a-f0-9-]{36})$/.exec(url.pathname)

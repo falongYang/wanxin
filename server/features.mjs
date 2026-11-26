@@ -18,6 +18,23 @@ export function levelOf(points) {
 }
 
 export const MOODS = ['开心', '平静', '疲惫', '难过', '焦虑', '生气', '期待', '其他']
+
+// 捏捏形象：只约定字段名与类型（与客户端 avatar.tsx 对应），不校验具体选项值，
+// 选项目录留在客户端，服务端存储的是「相对角色默认形象的覆盖配置」。
+const AVATAR_FIELDS = { skin: 'number', hair: 'string', hairColor: 'number', eyes: 'string', mouth: 'string', blush: 'string', outfit: 'string', outfitColor: 'number', accessory: 'string' }
+export function sanitizeAvatar(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null
+  const keys = Object.keys(input)
+  if (!keys.length || keys.length > Object.keys(AVATAR_FIELDS).length) return null
+  for (const key of keys) {
+    const kind = AVATAR_FIELDS[key]
+    if (!kind) return null
+    const value = input[key]
+    if (kind === 'number') { if (!Number.isSafeInteger(value) || value < 0 || value > 99) return null }
+    else if (typeof value !== 'string' || !value.length || Array.from(value).length > 20) return null
+  }
+  return { ...input }
+}
 const MOOD_REPLIES = {
   开心: ['替你把这份开心多留了一会儿。今晚的灯都亮得柔和一些。', '开心是会传染的，我这边也跟着亮了一下。'],
   平静: ['平静也很好。像退潮之后的海面，什么都稳稳的。', '这样的平静很难得，值得多待一会儿。'],
@@ -154,6 +171,23 @@ export function createFeatures(db, { authorization, usage, analytics, telemetry,
         award(threadId, 4)
         analytics.record(key, 'mood_checkin')
         return { status: 200, data: { mood: { mood, note: note || null, reply: replyText, createdAt: now() }, bond: bondInfo(threadId) } }
+      }
+    }
+
+    if (resource === 'avatar') {
+      if (method === 'GET') {
+        const row = db.prepare('SELECT config FROM avatar_config WHERE threadId = ?').get(threadId)
+        let config = null
+        if (row) { try { config = sanitizeAvatar(JSON.parse(row.config)) } catch { config = null } }
+        return { status: 200, data: { config } }
+      }
+      if (method === 'PUT') {
+        const config = sanitizeAvatar(body?.config)
+        if (!config) return { status: 400, data: { error: '形象配置不可用，请重新选择' } }
+        db.prepare('INSERT INTO avatar_config VALUES (?, ?, ?) ON CONFLICT(threadId) DO UPDATE SET config = excluded.config, updatedAt = excluded.updatedAt')
+          .run(threadId, JSON.stringify(config), now())
+        analytics.record(key, 'avatar_save')
+        return { status: 200, data: { config } }
       }
     }
 

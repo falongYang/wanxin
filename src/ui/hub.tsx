@@ -1,7 +1,7 @@
 // 陪伴功能页面：我的（心情/羁绊）、朋友圈、生活服务、信箱、河灯愿、纪念日、捏捏形象。
 // 组件自取数据；所有接口均线程级隔离。
 import { useEffect, useState } from 'react'
-import type { FormEvent } from 'react'
+import type { FormEvent, ReactNode } from 'react'
 
 export type Character = { id: string; name: string; scene: string; intro: string; opening: string; suggestions: [string, string][] }
 
@@ -29,11 +29,13 @@ export function BondBar({ bond, compact }: { bond: Bond | null; compact?: boolea
 }
 
 /* ---------- 我的：心情打卡 + 羁绊 ---------- */
-export function MeScreen({ api, onError, character, refreshHome }: {
+export function MeScreen({ api, onError, character, refreshHome, avatar, onEditAvatar }: {
   api: Api
   onError: FeatureError
   character: Character | null
   refreshHome?: () => void
+  avatar?: ReactNode
+  onEditAvatar?: () => void
 }) {
   const [moodState, setMoodState] = useState<{ today: { mood: string; note: string | null; reply: string | null } | null; streak: number; moods: string[]; history: { day: string; mood: string; note: string | null }[] } | null>(null)
   const [mood, setMood] = useState('')
@@ -74,6 +76,10 @@ export function MeScreen({ api, onError, character, refreshHome }: {
     <header className="album-actions">
       <h1>我的夜航</h1>
     </header>
+    {avatar && onEditAvatar && <button type="button" className="me-avatar" onClick={onEditAvatar}>
+      {avatar}
+      <span><strong>{character?.name ?? 'TA'}现在的样子</strong><small>捏一捏，给TA换套新搭配</small></span>
+    </button>}
     <div className="me-grid">
       <div className="me-card">
         <h2>今日心情</h2>
@@ -118,7 +124,7 @@ function momentTime(iso: string) {
   return date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-export function MomentsScreen({ api, onError, character }: { api: Api; onError: FeatureError; character: Character | null }) {
+export function MomentsScreen({ api, onError, character, avatar }: { api: Api; onError: FeatureError; character: Character | null; avatar?: ReactNode }) {
   const [moments, setMoments] = useState<Moment[]>([])
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
@@ -149,7 +155,7 @@ export function MomentsScreen({ api, onError, character }: { api: Api; onError: 
     if (busy) return
     setBusy(true)
     try {
-      const result = await api<{ already?: boolean }>('moments/refresh')
+      const result = await api<{ already?: boolean }>('moments/refresh', {})
       if (!result.already) { await load(); setNotice(`${character?.name ?? 'TA'}发了一条新动态。`) }
       else setNotice('TA今天已经发过一条了，明天再来。')
     } catch { onError('TA暂时发不出来，稍后再试。') } finally { setBusy(false) }
@@ -157,7 +163,7 @@ export function MomentsScreen({ api, onError, character }: { api: Api; onError: 
 
   async function like(moment: Moment) {
     try {
-      const result = await api<{ moment: { likes: number; liked: 0 | 1 } }>('moments/' + moment.id + '/like')
+      const result = await api<{ moment: { likes: number; liked: 0 | 1 } }>('moments/' + moment.id + '/like', {})
       setMoments(previous => previous.map(item => item.id === moment.id ? { ...item, likes: result.moment.likes, liked: result.moment.liked } : item))
     } catch { onError('点赞失败。') }
   }
@@ -188,6 +194,7 @@ export function MomentsScreen({ api, onError, character }: { api: Api; onError: 
     <ol className="moment-list">
       {moments.map(moment => <li key={moment.id} className={'moment ' + moment.author}>
         <div className="moment-head">
+          {avatar && moment.author === 'character' && <span className="moment-avatar" aria-hidden="true">{avatar}</span>}
           <strong>{moment.author === 'character' ? (character?.name ?? 'TA') : '我'}</strong>
           {moment.moodTag && <small>· {moment.moodTag}</small>}
           <time>{momentTime(moment.createdAt)}</time>

@@ -1,5 +1,6 @@
 import { groupCards } from './card-library.js'
 import { MeScreen, MomentsScreen, BondBar, type Bond } from './hub'
+import { AvatarScreen, Avatar, CHARACTER_DEFAULT_AVATAR, FALLBACK_AVATAR, mergeAvatar, type AvatarConfig } from './avatar'
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -137,7 +138,7 @@ function ReplyActivity({ message, name = '角色' }: { message: Message; name?: 
 }
 
 function App() {
-  const [screen, setScreen] = useState<'loading' | 'gate' | 'discover' | 'chat' | 'cards' | 'card' | 'me' | 'moments'>('loading')
+  const [screen, setScreen] = useState<'loading' | 'gate' | 'discover' | 'chat' | 'cards' | 'card' | 'me' | 'moments' | 'avatar'>('loading')
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
   const [queue, setQueue] = useState<QueuedMessage[]>([])
@@ -180,6 +181,8 @@ function App() {
   const sending = useRef(false)
   const [listening, setListening] = useState(false)
   const [bond, setBond] = useState<Bond | null>(null)
+  const [avatarOverride, setAvatarOverride] = useState<Partial<AvatarConfig> | null>(null)
+  const avatarConfig = mergeAvatar((character && CHARACTER_DEFAULT_AVATAR[character.id]) || FALLBACK_AVATAR, avatarOverride)
   useEffect(() => {
     if (screen !== 'discover' && screen !== 'me' && screen !== 'moments') return
     void api<Bond>('bond').then(setBond).catch(() => {})
@@ -198,6 +201,10 @@ function App() {
         setPickedId(current?.id ?? 'lin-zhou')
       }
       setScreen(session.threadId ? 'discover' : 'gate')
+      if (session.threadId) {
+        void api<{ config: Partial<AvatarConfig> | null }>('avatar')
+          .then(({ config }) => setAvatarOverride(config)).catch(() => {})
+      }
     } catch {
       setError('暂时无法连接，请重试。')
     }
@@ -535,7 +542,7 @@ function App() {
     {screen === 'chat' ? <>
       <header className="chat-header">
         <button type="button" disabled={busy} onClick={() => { setError(''); setScreen('discover') }}>返回</button>
-        <div><strong>{character?.name ?? '角色'}</strong><small>AI 虚构角色</small></div>
+        <div className="chat-who"><Avatar config={avatarConfig} size={38} /><span><strong>{character?.name ?? '角色'}</strong><small>AI 虚构角色</small></span></div>
         <button type="button" disabled={busy} onClick={() => { setReturnFromCards('chat'); void cardAction(showCards) }}>共同经历</button>
         <details className="chat-menu"><summary>菜单</summary>
           <button type="button" disabled={busy} onClick={() => void clearSession()}>清除会话</button>
@@ -725,6 +732,7 @@ function App() {
         <div className="foyer" ref={foyer}>
           <article>
             <div className="radio-scene" aria-hidden="true"><span>{character?.scene ?? '深夜 · 晚信'}</span></div>
+            <div className="foyer-avatar" aria-hidden="true"><Avatar config={avatarConfig} size={104} glow /></div>
             <p className="scene">{character?.scene?.split('·')[0].trim() ?? '深夜'}</p><h1>{character?.name ?? '角色'}</h1>
             <small>AI 虚构角色</small><p>{character?.intro ?? ''}</p>
             <blockquote>{character?.opening ?? ''}</blockquote>
@@ -743,12 +751,13 @@ function App() {
           }}>{label}</button>)}
         </nav>
       </section>}
-      {screen === 'me' && <MeScreen api={api} onError={message => setError(message)} character={character} refreshHome={() => {}} />}
-      {screen === 'moments' && <MomentsScreen api={api} onError={message => setError(message)} character={character} />}
-      {(screen === 'discover' || screen === 'me' || screen === 'moments') && <nav className="tabbar" aria-label="主导航">
+      {screen === 'me' && <MeScreen api={api} onError={message => setError(message)} character={character} refreshHome={() => {}} avatar={<Avatar config={avatarConfig} size={72} glow />} onEditAvatar={() => { setError(''); setScreen('avatar') }} />}
+      {screen === 'moments' && <MomentsScreen api={api} onError={message => setError(message)} character={character} avatar={<Avatar config={avatarConfig} size={34} />} />}
+      {screen === 'avatar' && <AvatarScreen api={api} onError={message => setError(message)} characterId={character?.id} characterName={character?.name ?? 'TA'} onSaved={config => setAvatarOverride(config)} onClose={() => { setError(''); setScreen('me') }} />}
+      {(screen === 'discover' || screen === 'me' || screen === 'moments' || screen === 'avatar') && <nav className="tabbar" aria-label="主导航">
         <button type="button" className={screen === 'discover' ? 'active' : ''} onClick={() => { setError(''); setScreen('discover') }}>玄关</button>
         <button type="button" className={screen === 'moments' ? 'active' : ''} onClick={() => { setError(''); setScreen('moments') }}>朋友圈</button>
-        <button type="button" className={screen === 'me' ? 'active' : ''} onClick={() => { setError(''); setScreen('me') }}>我的</button>
+        <button type="button" className={screen === 'me' || screen === 'avatar' ? 'active' : ''} onClick={() => { setError(''); setScreen('me') }}>我的</button>
       </nav>}
       {error && <p role="alert">{error}</p>}
       {showAdmission && <button type="button" onClick={() => setScreen('gate')}>重新确认邀请</button>}

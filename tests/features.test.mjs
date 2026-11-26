@@ -108,6 +108,37 @@ test('清除会话级联删除陪伴数据', async t => {
   assert.equal((await request('bond', null, fresh)).json().points, 0)
   assert.equal((await request('mood', null, fresh)).json().today, null)
 })
+test('捏捏形象：保存/读取/形状校验/线程隔离/级联删除', async t => {
+  const app = createApp(':memory:', async () => '合成回复', { access: developmentPolicy() })
+  t.after(() => app.emit('close'))
+  const request = makeClient(app)
+  const cookie = await session(request)
+  // 未保存前为空，客户端会用角色默认形象
+  assert.equal((await request('avatar', null, cookie)).json().config, null)
+  const saved = await request('avatar', { config: { skin: 2, hair: '卷发', accessory: '星发夹' } }, cookie, 'PUT')
+  assert.equal(saved.status, 200)
+  assert.deepEqual(saved.json().config, { skin: 2, hair: '卷发', accessory: '星发夹' })
+  assert.deepEqual((await request('avatar', null, cookie)).json().config, { skin: 2, hair: '卷发', accessory: '星发夹' })
+  // 覆盖保存
+  await request('avatar', { config: { hair: '马尾' } }, cookie, 'PUT')
+  assert.deepEqual((await request('avatar', null, cookie)).json().config, { hair: '马尾' })
+  // 形状校验：未知字段 / 类型不符 / 空对象 / 非对象
+  assert.equal((await request('avatar', { config: { nope: 1 } }, cookie, 'PUT')).status, 400)
+  assert.equal((await request('avatar', { config: { skin: '浅麦' } }, cookie, 'PUT')).status, 400)
+  assert.equal((await request('avatar', { config: { hair: 3 } }, cookie, 'PUT')).status, 400)
+  assert.equal((await request('avatar', { config: {} }, cookie, 'PUT')).status, 400)
+  assert.equal((await request('avatar', { config: '林舟' }, cookie, 'PUT')).status, 400)
+  // 保存形象不增加羁绊
+  assert.equal((await request('bond', null, cookie)).json().points, 0)
+  // 线程隔离
+  const other = await session(request)
+  assert.equal((await request('avatar', null, other)).json().config, null)
+  // 清除会话级联删除
+  await request('session', null, cookie, 'DELETE')
+  const fresh = await session(request)
+  assert.equal((await request('avatar', null, fresh)).json().config, null)
+})
+
 test('朋友圈：发布/点赞/评论/角色发动态每日一次', async t => {
   const app = createApp(':memory:', async () => '角色的一条动态正文\n随想', { access: developmentPolicy() })
   t.after(() => app.emit('close'))
@@ -147,6 +178,8 @@ test('朋友圈：发布/点赞/评论/角色发动态每日一次', async t => 
   // 校验与格式错误
   assert.equal((await request('moments', { content: '' }, cookie)).status, 400)
   assert.equal((await request('moments/' + momentId + '/comment', { content: '' }, cookie)).status, 400)
+  // 错误方法（GET refresh）不再 500，统一 404
+  assert.equal((await request('moments/refresh', null, cookie)).status, 404)
 })
 
 test('朋友圈线程隔离且清除会话后为空', async t => {
