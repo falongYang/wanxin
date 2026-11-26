@@ -39,6 +39,14 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
       title TEXT NOT NULL, body TEXT NOT NULL, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL,
       UNIQUE(threadId, sourceMessageId)
     );
+    CREATE TABLE IF NOT EXISTS message_pins (
+      messageId TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+      pinnedAt TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS reply_activity (
+      messageId TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+      contextCount INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS message_card_context (
       messageId TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
       cardId TEXT NOT NULL, PRIMARY KEY(messageId, cardId)
@@ -46,7 +54,17 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
   `)
   const analytics = createAnalytics(db, clock)
   const insert = db.prepare('INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-  const history = db.prepare('SELECT id, role, content, requestId, status, sourceCardId FROM messages WHERE threadId = ? ORDER BY rowid')
+  const history = db.prepare(`
+    SELECT id, role, content, requestId, status, sourceCardId, reply_activity.contextCount,
+      message_pins.messageId IS NOT NULL AS pinned
+    FROM messages
+    LEFT JOIN message_pins ON message_pins.messageId = messages.id
+    LEFT JOIN reply_activity ON reply_activity.messageId = messages.id
+    WHERE threadId = ? ORDER BY messages.rowid
+  `)
+  const recordActivity = db.prepare('INSERT INTO reply_activity VALUES (?, ?)')
+  const pinMessage = db.prepare('INSERT INTO message_pins VALUES (?, ?) ON CONFLICT(messageId) DO NOTHING')
+  const unpinMessage = db.prepare('DELETE FROM message_pins WHERE messageId = ?')
   const prior = db.prepare('SELECT id, content, sourceCardId FROM messages WHERE threadId = ? AND role = ? AND requestId = ?')
   const findThread = db.prepare('SELECT id FROM threads WHERE visitorId = ?')
   const pending = new Map()
@@ -102,6 +120,7 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
       try {
         const assistantId = randomUUID()
         insert.run(assistantId, threadId, 'assistant', content, requestId, 'complete', card?.id ?? null, new Date().toISOString())
+        recordActivity.run(assistantId, context.length)
         for (const cardId of cardIds) recordDependency.run(assistantId, cardId)
         status.run('complete', user.id)
         db.exec('COMMIT')
@@ -161,12 +180,21 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
         return json(response, 503, {})
       }
     }
+    const pinRoute = /^\/api\/pins\/([a-f0-9-]{36})$/.exec(url.pathname)
+    const mutatingPin = pinRoute && ['PUT', 'DELETE'].includes(request.method)
     const cardRoute = /^\/api\/cards\/([a-f0-9-]{36})$/.exec(url.pathname)
     if (!['GET /api/thread', 'POST /api/messages', 'POST /api/card-preview', 'GET /api/cards',
-      'POST /api/cards', 'DELETE /api/session'].includes(route) &&
+      'POST /api/cards', 'DELETE /api/session'].includes(route) && !mutatingPin &&
       !(cardRoute && ['GET', 'PATCH', 'DELETE'].includes(request.method))) return json(response, 404, {})
     if (!threadId) return json(response, 403, { error: '请先确认成年' })
     if (url.searchParams.has('threadId') && url.searchParams.get('threadId') !== threadId) return json(response, 404, {})
+    if (mutatingPin) {
+      const messageId = pinRoute[1]
+      if (!findSource.get(threadId, messageId)) return json(response, 404, {})
+      if (request.method === 'PUT') pinMessage.run(messageId, new Date().toISOString())
+      else unpinMessage.run(messageId)
+      return json(response, 200, { messages: history.all(threadId) })
+    }
     if (route === 'GET /api/thread') return json(response, 200, { messages: history.all(threadId) })
     if (route === 'GET /api/cards') {
       return json(response, 200, { cards: db.prepare('SELECT * FROM cards WHERE threadId = ? ORDER BY rowid DESC').all(threadId) })

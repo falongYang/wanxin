@@ -216,3 +216,37 @@ summary { cursor: pointer; }
 .letter-body { margin: 0 0 1rem; line-height: 2; white-space: pre-wrap; overflow-wrap: anywhere; }
 .card-form details { border-top: 1px solid #302a2620; border-bottom: 1px solid #302a2620; font-size: .85rem; }
 .card-form .album-actions { margin-top: .5rem; }
+
+.history-drawer { z-index: 1; padding: .65rem; border: 1px solid var(--border); }
+.drawer-panel input {
+  width: 100%;
+  margin-top: .6rem;
+  padding: .55rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--field);
+  font: inherit;
+}
+.drawer-panel li { display: flex; gap: .4rem; margin-block: .35rem; }
+.drawer-panel li button:first-child { flex: 1; min-width: 0; }
+.drawer-panel li button:last-child { flex-shrink: 0; }
+.message-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
+.activity, .chat-status { color: var(--muted); font-size: .85rem; }
+.activity { margin-top: .65rem; white-space: normal; }
+.activity ol { margin: .5rem 0 0; padding-inline-start: 1.2rem; }
+.lantern-river {
+  display: grid;
+  gap: .85rem;
+  padding: .9rem .75rem;
+  border-radius: 20px;
+  background: linear-gradient(165deg, var(--sky), var(--glow), var(--sky));
+}
+.lantern-river:empty { display: none; }
+.lantern-river .card-list-item {
+  margin-block: 0;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+.lantern-river .card-list-item:nth-child(odd) { border-inline-start: 3px solid var(--warm); }
+.lantern-river .card-list-item:nth-child(even) { border-inline-end: 3px solid var(--warm); }

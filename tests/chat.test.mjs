@@ -10,9 +10,9 @@ test('确认成年、失败后重试、并发去重、刷新和访客隔离', as
     return '电台还亮着。'
   })
   t.after(() => app.close())
-  function request(path, body, cookie) {
+  function request(path, body, cookie, method = body ? 'POST' : 'GET') {
     const input = Readable.from(body ? [JSON.stringify(body)] : [])
-    Object.assign(input, { method: body ? 'POST' : 'GET', url: '/api/' + path, headers: { cookie } })
+    Object.assign(input, { method, url: '/api/' + path, headers: { cookie } })
     return new Promise(resolve => {
       const headers = new Map()
       const output = {
@@ -33,9 +33,18 @@ test('确认成年、失败后重试、并发去重、刷新和访客隔离', as
   assert.equal(calls, 2)
   const history = await (await request('thread', undefined, cookie)).json()
   assert.deepEqual(history.messages.map(message => message.role), ['assistant', 'user', 'assistant'])
+  const reply = history.messages.at(-1)
+  assert.equal(reply.contextCount, 1)
+  assert.equal(history.messages[0].contextCount, null)
+  assert.equal((await request('pins/' + reply.id, undefined, cookie, 'PUT')).status, 200)
+  assert.equal((await request('pins/' + reply.id, undefined, cookie, 'PUT')).status, 200)
+  assert.deepEqual((await (await request('thread', undefined, cookie)).json()).messages.filter(message => message.pinned).map(message => message.id), [reply.id])
   const second = await request('session', { adult: true })
   const other = second.headers.get('set-cookie').split(';')[0]
   const { threadId } = await session.json()
+  assert.equal((await request('pins/' + reply.id, undefined, other, 'PUT')).status, 404)
+  assert.equal((await request('pins/' + reply.id, undefined, cookie, 'DELETE')).status, 200)
+  assert.equal((await (await request('thread', undefined, cookie)).json()).messages.at(-1).pinned, 0)
   assert.equal((await request('thread?threadId=' + threadId, undefined, other)).status, 404)
   assert.equal((await (await request('thread', undefined, other)).json()).messages.length, 1)
 })

@@ -9,6 +9,8 @@ type Message = {
   content: string
   requestId: string | null
   sourceCardId?: string | null
+  contextCount?: number | null
+  pinned?: number
   status: 'complete' | 'pending' | 'failed'
 }
 type Submission = { requestId: string; text: string; sourceCardId?: string | null; queuedIds?: string[] }
@@ -90,13 +92,59 @@ function Weather({ city, selectCity }: { city: City | null; selectCity: (city: C
   </details>
 }
 
+function ConversationDrawer({ messages, busy, togglePin }: {
+  messages: Message[]
+  busy: boolean
+  togglePin: (message: Message) => void
+}) {
+  const drawer = useRef<HTMLDetailsElement>(null)
+  const [query, setQuery] = useState('')
+  const term = query.trim().toLocaleLowerCase()
+  const matching = messages.filter(message => message.status === 'complete' &&
+    (term ? message.content.toLocaleLowerCase().includes(term) : message.pinned))
+  const entries = [...matching.filter(message => message.pinned).reverse(),
+    ...matching.filter(message => !message.pinned).reverse()]
+
+  return <details ref={drawer} className="history-drawer">
+    <summary>会话抽屉</summary>
+    <div className="drawer-panel">
+      <input type="search" aria-label="搜索聊天记录" placeholder="搜索聊天记录" value={query}
+        onChange={event => setQuery(event.target.value)} />
+      {!entries.length && <p>{term ? '未找到匹配的消息。' : '置顶的消息会显示在这里。'}</p>}
+      <ul aria-label={term ? '搜索结果' : '置顶消息'}>
+        {entries.map(message => <li key={message.id}>
+          <button type="button" onClick={() => {
+            if (drawer.current) drawer.current.open = false
+            const target = document.getElementById('message-' + message.id)
+            target?.focus({ preventScroll: true })
+            target?.scrollIntoView({ block: 'center' })
+          }}>{message.content.slice(0, 100)}</button>
+          <button type="button" disabled={busy} onClick={() => togglePin(message)}>
+            {message.pinned ? '取消置顶' : '置顶'}
+          </button>
+        </li>)}
+      </ul>
+    </div>
+  </details>
+}
+
+function ReplyActivity({ message }: { message: Message }) {
+  return <details className="activity">
+    <summary>回复过程</summary>
+    <ol>
+      <li>读取本次消息及 {message.contextCount} 条近期消息</li>
+      {message.sourceCardId && <li>加入你选中的经历卡</li>}
+      <li>生成并保存林舟的回复</li>
+    </ol>
+  </details>
+}
+
 function App() {
   const [screen, setScreen] = useState<'loading' | 'gate' | 'discover' | 'chat' | 'cards' | 'card'>('loading')
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
   const [queue, setQueue] = useState<QueuedMessage[]>([])
   const [editing, setEditing] = useState<string | null>(null)
-  const [search, setSearch] = useState('')
   const [city, setCity] = useState<City | null>(null)
   const [weatherAvailable, setWeatherAvailable] = useState(false)
   const [theme, setTheme] = useState(() => new Date().getHours() >= 6 && new Date().getHours() < 12 ? 'morning' : 'night')
@@ -375,10 +423,24 @@ function App() {
       setDraft('')
       setQueue([])
       setEditing(null)
-      setSearch('')
       setCity(null)
       setScreen('gate')
     })
+  }
+
+  async function togglePin(message: Message) {
+    if (busy || sending.current) return
+    setBusy(true)
+    setError('')
+    try {
+      const result = await api<{ messages: Message[] }>('pins/' + message.id, undefined, message.pinned ? 'DELETE' : 'PUT')
+      const updated = result.messages.find(item => item.id === message.id)
+      setMessages(previous => previous.map(item => item.id === message.id ? { ...item, pinned: updated?.pinned } : item))
+    } catch {
+      setError('暂时无法更新置顶，请重试。')
+    } finally {
+      setBusy(false)
+    }
   }
 
   return <main data-theme={theme} className={screen === 'chat' ? 'shell chat' : 'shell discovery'}>
@@ -392,22 +454,10 @@ function App() {
         </details>
       </header>
       <section className="history" aria-label="聊天记录"><p className="history-intro">深夜电台 · 想说的话，这里都听得到</p>
-        <details className="history-drawer">
-          <summary>搜索聊天记录</summary>
-          <input type="search" aria-label="搜索聊天记录" value={search} onChange={event => setSearch(event.target.value)} />
-          {search.trim() && <ul>
-            {messages.filter(message => message.content.toLowerCase().includes(search.trim().toLowerCase())).map(message =>
-              <li key={message.id}><button onClick={event => {
-                event.currentTarget.closest('details')?.removeAttribute('open')
-                const target = document.getElementById('message-' + message.id)
-                target?.focus({ preventScroll: true })
-                target?.scrollIntoView({ block: 'center' })
-              }}>{message.content.slice(0, 100)}</button></li>
-            )}
-          </ul>}
-        </details>
+        <ConversationDrawer messages={messages} busy={busy} togglePin={message => void togglePin(message)} />
         {messages.map(message => <div id={'message-' + message.id} tabIndex={-1} className={'bubble ' + message.role + (highlighted === message.id ? ' source-highlight' : '')} key={message.id}>
           {message.content}
+          {message.contextCount != null && <ReplyActivity message={message} />}
           {message.role === 'user' && message.status === 'complete' && <div className="message-tools">
             <button type="button" className="message-trigger" aria-label="消息操作" aria-haspopup="menu"
               aria-expanded={messageMenu === message.id} aria-controls={messageMenu === message.id ? 'message-menu' : undefined}
@@ -426,10 +476,8 @@ function App() {
           {message.role === 'user' && message.status !== 'complete' && message.requestId && !busy &&
             <button type="button" onClick={() => void send(failed?.requestId === message.requestId ? failed : { requestId: message.requestId!, text: message.content, sourceCardId: message.sourceCardId })}>重试</button>}
         </div>)}
-        {(busy || failed || messages.at(-1)?.role === 'assistant') && <details className="activity">
-          <summary role="status">{busy ? '正在处理' : failed ? '回复失败' : '回复已收到'}</summary>
-          <p>{busy ? (sending.current ? '林舟正在回复…' : '正在打开…') : failed ? '可以在原消息下重试。' : '林舟已回复当前消息。'}</p>
-        </details>}
+        {(busy || failed || messages.at(-1)?.role === 'assistant') &&
+          <p role="status" className="chat-status">{busy ? '正在处理' : failed ? '回复失败' : '回复已收到'}</p>}
         <div ref={bottom} />
       </section>
       <div className="composer">
@@ -485,6 +533,7 @@ function App() {
       </header>
       {screen === 'cards' && <>
         {cards.length === 0 && <p className="muted">这里会收好你与林舟的片段。<br />回到聊天，选择想留下的消息做成经历卡。</p>}
+        <div className="lantern-river">
         {cards.map(card => <button className="card-list-item" key={card.id} disabled={busy}
           onClick={() => void cardAction(async () => {
             const result = await api<{ card: Card }>('cards/' + card.id)
@@ -495,9 +544,10 @@ function App() {
           <strong><span className="lantern" aria-hidden="true" />{card.title}</strong><small>{new Date(card.createdAt).toLocaleDateString('zh-CN')}</small>
           <span>{card.body}</span>
         </button>)}
+        </div>
       </>}
       {screen === 'card' && cardDraft && <form className="card-form" onSubmit={saveCard}>
-        <small>{new Date(cardDraft.createdAt).toLocaleDateString('zh-CN')}</small>
+        <small><span className="lantern" aria-hidden="true" />{new Date(cardDraft.createdAt).toLocaleDateString('zh-CN')}</small>
         {editingCard ? <><label>标题<input required maxLength={60} disabled={busy} value={cardDraft.title}
           onChange={event => setCardDraft({ ...cardDraft, title: event.target.value })} /></label>
         <label>正文<textarea required maxLength={1000} rows={4} disabled={busy} value={cardDraft.body}
