@@ -41,3 +41,6 @@ MODEL_MODE=ollama MODEL_API_URL=http://127.0.0.1:11434/api/chat MODEL_NAME=qwen3
 使用 `.nvmrc` 固定的 Node22.23.5。依赖锁及[临时副本构建、源码清单和校验说明](docs/build-candidate.md)用于隔离验证；工作树摘要标识未提交候选，HEAD仅作基点。
 
 共同经历支持[内存搜索与上海月份分组](docs/card-library.md)，详情返回保留查询和列表位置。
+线上部署环境：远端 101.42.26.83，分两处：•前端（nginx 实际服务路径）：/var/www/ant-epoch/wanxin/•后
+端：/var/www/wanxin/server/（现 6 个 .mjs）nginx root 是 /var/www/ant-epoch
+github地址：https://github.com/falongYang/wanxin
