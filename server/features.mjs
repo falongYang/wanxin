@@ -80,6 +80,8 @@ export function createFeatures(db, { authorization, usage, analytics, telemetry,
   `)
 
   const now = () => clock().toISOString()
+  // 上海时区某天的起点（ISO），用于「今天内」的判断
+  const dayStart = day => new Date(day + 'T00:00:00+08:00').toISOString()
   const bondRow = db.prepare('SELECT points FROM bond WHERE threadId = ?')
   const addBond = db.prepare('INSERT INTO bond VALUES (?, ?, ?) ON CONFLICT(threadId) DO UPDATE SET points = points + excluded.points, updatedAt = excluded.updatedAt')
 
@@ -154,6 +156,51 @@ export function createFeatures(db, { authorization, usage, analytics, telemetry,
     let streak = 0
     for (let i = start; hasMood(threadId, DAY.format(new Date(clock().getTime() - i * 86400000))); i++) streak++
     return streak
+  }
+
+  /* ---------- 仪式互动模板（零成本降级，不调用模型） ---------- */
+  const letterTemplates = (threadId, bond) => {
+    const close = bond.level >= 3
+    const card = db.prepare('SELECT title FROM cards WHERE threadId = ? ORDER BY rowid DESC LIMIT 1').get(threadId)?.title
+    if (card) return close
+      ? [`把「${card}」又看了一遍。有些片段像退潮后留在沙滩上的光，我替你收在抽屉最顺手的位置。今晚也记得歇一歇。`,
+        `今天的节目单里夹了一句只有你知道的话，出处是「${card}」。海上的雾散得慢，我等灯亮。`]
+      : [`电台的抽屉里多了一张卡，「${card}」。不知道你看到会不会想起那一晚——要是想起，就来把故事讲完。`]
+    return close
+      ? ['今晚海上有点雾。电台的灯我多留了一盏，节目单翻到一半，等你回来接着聊。',
+        '风把海面吹得很平。这样的夜晚适合慢慢说小事——我把时间留好了。']
+      : ['今晚海上有点雾，电台的灯我多留了一盏。不知道你那边的天色怎么样——要是累了，就把今晚交给晚风。',
+        '新的一晚，节目还没有名字。你可以什么都不说，只是让灯亮一会儿。']
+  }
+  const BLESSINGS = ['愿这盏灯替你把心事带去很远的海面，风会记得方向。', '放出去的灯不会空手而回，海会给你回信的。', '这盏灯我看见了。愿它照到的地方，都比今晚柔软一点。', '许过的愿会挂在桅杆上，陪你到下一个港口。']
+  const GIFT_KINDS = Object.freeze([
+    { id: 'cocoa', name: '一杯热可可' },
+    { id: 'lantern', name: '一枚河灯' },
+    { id: 'note', name: '一张手写便签' },
+    { id: 'tune', name: '一段晚安小调' },
+  ].map(Object.freeze))
+  const GIFT_REPLIES = {
+    cocoa: '热可可我温在电台的小炉子上，杯壁的暖意刚好能焐手。今晚就先握着它，慢慢来。',
+    lantern: '我把这枚河灯推回海里了。你看，它往的方向刚好是我们第一次说话的那片海。',
+    note: '便签我夹在了今晚的节目单里，字写得比平时慢——有些话值得写慢一点。',
+    tune: '小调哼给你听，只有这一晚有。要是喜欢，明天我再哼一遍不一样的。',
+  }
+
+  // 纪念日（含每年重复）下一次到来的剩余天数
+  function anniversaryRows(threadId) {
+    return db.prepare('SELECT id, title, date, repeatYearly FROM anniversaries WHERE threadId = ? ORDER BY date').all(threadId)
+      .map(row => {
+        const base = new Date(row.date + 'T00:00:00+08:00')
+        let next = base
+        if (row.repeatYearly) {
+          const today = new Date(clock().getTime() + 8 * 3600000)
+          next = new Date(base)
+          next.setFullYear(today.getUTCFullYear())
+          if (next.getTime() < today.getTime() - 86400000) next = new Date(next.getTime() + 365.25 * 86400000)
+        }
+        return { id: row.id, title: row.title, date: row.date, repeatYearly: row.repeatYearly, daysLeft: Math.max(0, Math.round((next.getTime() - clock().getTime()) / 86400000)) }
+      })
+      .sort((a, b) => a.daysLeft - b.daysLeft)
   }
 
   async function handle(ctx) {
@@ -301,25 +348,111 @@ export function createFeatures(db, { authorization, usage, analytics, telemetry,
       }
     }
 
+    /* ---------- 每日信箱 ---------- */
+    if (resource === 'letters') {
+      if (!arg && method === 'GET') {
+        return { status: 200, data: { letters: db.prepare('SELECT id, day, content, readAt, createdAt FROM letters WHERE threadId = ? ORDER BY day DESC LIMIT 14').all(threadId) } }
+      }
+      if (!arg && method === 'POST') {
+        const day = dayKey(clock)
+        const existing = db.prepare('SELECT id, day, content, readAt, createdAt FROM letters WHERE threadId = ? AND day = ?').get(threadId, day)
+        if (existing) return { status: 200, data: { letter: existing, already: true } }
+        const context = chatContext(threadId)
+        let content = null
+        const modelReply = await callModel(ctx, 'letter', 'letter:' + day + ':' + threadId,
+          [{ role: 'user', content: '给用户写今天的信笺（中文，80–140字，口吻符合你的人设，用第二人称，不用列表，结尾不落款）。可以结合我们最近聊过的内容。' },
+            ...context.slice(-8)],
+          persona + '这是你写给用户的一封日常信笺，安静温柔，像从电台直播间寄出的手写短笺。只输出信的正文。')
+        if (modelReply) content = modelReply.slice(0, 800)
+        if (!content) {
+          const pool = letterTemplates(threadId, bondInfo(threadId))
+          content = pool[Math.floor(Math.random() * pool.length)]
+        }
+        const id = randomUUID()
+        const saved = db.prepare('INSERT OR IGNORE INTO letters VALUES (?, ?, ?, ?, NULL, ?)').run(id, threadId, day, content, now())
+        if (!saved.changes) return { status: 200, data: { letter: db.prepare('SELECT id, day, content, readAt, createdAt FROM letters WHERE threadId = ? AND day = ?').get(threadId, day), already: true } }
+        return { status: 200, data: { letter: { id, day, content, readAt: null, createdAt: now() } } }
+      }
+      if (arg && action === 'read' && method === 'POST') {
+        const target = db.prepare('SELECT id, readAt FROM letters WHERE id = ? AND threadId = ?').get(arg, threadId)
+        if (!target) return { status: 404, data: {} }
+        if (!target.readAt) {
+          db.prepare('UPDATE letters SET readAt = ? WHERE id = ?').run(now(), arg)
+          award(threadId, 2)
+          analytics.record(key, 'letter_open')
+        }
+        return { status: 200, data: { letter: db.prepare('SELECT id, day, content, readAt, createdAt FROM letters WHERE id = ?').get(arg) } }
+      }
+    }
+
+    /* ---------- 河灯许愿 ---------- */
+    if (resource === 'wishes') {
+      if (method === 'GET') {
+        return { status: 200, data: { wishes: db.prepare('SELECT id, content, blessing, createdAt FROM wishes WHERE threadId = ? ORDER BY rowid DESC LIMIT 30').all(threadId) } }
+      }
+      if (method === 'POST') {
+        const content = typeof body?.content === 'string' ? body.content.trim() : ''
+        if (!content || Array.from(content).length > 120) return { status: 400, data: { error: '愿望需要 1–120 字' } }
+        const day = dayKey(clock)
+        const todayCount = count('SELECT count(*) n FROM wishes WHERE threadId = ? AND createdAt >= ?', threadId, dayStart(day))
+        const id = randomUUID()
+        const blessing = BLESSINGS[Math.floor(Math.random() * BLESSINGS.length)]
+        db.prepare('INSERT INTO wishes VALUES (?, ?, ?, ?, ?)').run(id, threadId, content, blessing, now())
+        if (todayCount < 3) award(threadId, 2) // 羁绊加分每天前 3 次许愿
+        analytics.record(key, 'wish_make')
+        return { status: 200, data: { wish: { id, content, blessing, createdAt: now() } } }
+      }
+    }
+
+    /* ---------- 纪念日 ---------- */
+    if (resource === 'anniversaries') {
+      if (!arg && method === 'GET') return { status: 200, data: { anniversaries: anniversaryRows(threadId) } }
+      if (!arg && method === 'POST') {
+        const title = typeof body?.title === 'string' ? body.title.trim() : ''
+        const date = typeof body?.date === 'string' ? body.date.trim() : ''
+        const repeatYearly = body?.repeatYearly === false ? 0 : 1
+        if (!title || Array.from(title).length > 24) return { status: 400, data: { error: '标题需要 1–24 字' } }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(new Date(date + 'T00:00:00+08:00').getTime())) {
+          return { status: 400, data: { error: '日期需要形如 2026-12-31' } }
+        }
+        const id = randomUUID()
+        db.prepare('INSERT INTO anniversaries VALUES (?, ?, ?, ?, ?, ?)').run(id, threadId, title, date, repeatYearly, now())
+        analytics.record(key, 'anniversary_save')
+        return { status: 200, data: { anniversary: anniversaryRows(threadId).find(row => row.id === id) } }
+      }
+      if (arg && !action && method === 'DELETE') {
+        const target = db.prepare('SELECT id FROM anniversaries WHERE id = ? AND threadId = ?').get(arg, threadId)
+        if (!target) return { status: 404, data: {} }
+        db.prepare('DELETE FROM anniversaries WHERE id = ? AND threadId = ?').run(arg, threadId)
+        return { status: 200, data: { ok: true } }
+      }
+    }
+
+    /* ---------- 小礼物 ---------- */
+    if (resource === 'gifts') {
+      const day = dayKey(clock)
+      const todayCount = () => db.prepare('SELECT count FROM gift_log WHERE threadId = ? AND day = ?').get(threadId, day)?.count ?? 0
+      if (method === 'GET') {
+        return { status: 200, data: { today: todayCount(), limit: 2, kinds: GIFT_KINDS.map(({ id, name }) => ({ id, name })) } }
+      }
+      if (method === 'POST') {
+        const kind = GIFT_KINDS.find(item => item.id === body?.kind)
+        if (!kind) return { status: 400, data: { error: '选一个小礼物吧' } }
+        if (todayCount() >= 2) return { status: 400, data: { error: '今天的两份礼物已经送完了，明天再来。' } }
+        db.prepare('INSERT INTO gift_log VALUES (?, ?, 1) ON CONFLICT(threadId, day) DO UPDATE SET count = count + 1').run(threadId, day)
+        award(threadId, 8)
+        analytics.record(key, 'gift_send')
+        return { status: 200, data: { gift: { kind: kind.id, name: kind.name, reply: GIFT_REPLIES[kind.id] }, today: todayCount(), limit: 2 } }
+      }
+    }
+
     if (resource === 'home' && method === 'GET') {
       const day = dayKey(clock)
       const mood = db.prepare('SELECT mood FROM mood_log WHERE threadId = ? AND day = ?').get(threadId, day)
       const unread = count("SELECT count(*) n FROM letters WHERE threadId = ? AND readAt IS NULL", threadId)
       const wishesN = count('SELECT count(*) n FROM wishes WHERE threadId = ?', threadId)
       const gifts = db.prepare('SELECT count FROM gift_log WHERE threadId = ? AND day = ?').get(threadId, day)?.count ?? 0
-      const days = db.prepare('SELECT id, title, date, repeatYearly FROM anniversaries WHERE threadId = ? ORDER BY date').all(threadId)
-        .map(row => {
-          const base = new Date(row.date + 'T00:00:00+08:00')
-          let next = base
-          if (row.repeatYearly) {
-            const today = new Date(clock().getTime() + 8 * 3600000)
-            next = new Date(base)
-            next.setFullYear(today.getUTCFullYear())
-            if (next.getTime() < today.getTime() - 86400000) next = new Date(next.getTime() + 365.25 * 86400000)
-          }
-          return { id: row.id, title: row.title, date: row.date, repeatYearly: row.repeatYearly, daysLeft: Math.max(0, Math.round((next.getTime() - clock().getTime()) / 86400000)) }
-        })
-        .sort((a, b) => a.daysLeft - b.daysLeft)
+      const days = anniversaryRows(threadId)
       return {
         status: 200,
         data: {

@@ -2,6 +2,7 @@ import { groupCards } from './card-library.js'
 import { MeScreen, MomentsScreen, BondBar, type Bond } from './hub'
 import { AvatarScreen, Avatar, CHARACTER_DEFAULT_AVATAR, FALLBACK_AVATAR, mergeAvatar, type AvatarConfig } from './avatar'
 import { ServicesScreen, detectServiceHint, fetchServices, openService, type ServiceItem } from './services'
+import { RitualsScreen } from './rituals'
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -139,7 +140,7 @@ function ReplyActivity({ message, name = '角色' }: { message: Message; name?: 
 }
 
 function App() {
-  const [screen, setScreen] = useState<'loading' | 'gate' | 'discover' | 'chat' | 'cards' | 'card' | 'me' | 'moments' | 'avatar' | 'services'>('loading')
+  const [screen, setScreen] = useState<'loading' | 'gate' | 'discover' | 'chat' | 'cards' | 'card' | 'me' | 'moments' | 'avatar' | 'services' | 'rituals'>('loading')
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
   const [queue, setQueue] = useState<QueuedMessage[]>([])
@@ -756,9 +757,13 @@ function App() {
             <h2>生活服务</h2><p>外卖、购物、看剧、听歌——从晚信顺手打开。</p>
             <button disabled={busy} onClick={() => { setError(''); setScreen('services') }}>打开服务面板</button>
           </article>
+          <article>
+            <h2>小小仪式</h2><p>收一封信、放一盏河灯、记一个日子。</p>
+            <button disabled={busy} onClick={() => { setError(''); setScreen('rituals') }}>打开小小仪式</button>
+          </article>
         </div>
         <nav className="foyer-heading" aria-label="切换玄关卡片">
-          {['深夜电台', '共同经历', '生活服务'].map((label, index) => <button key={label} onClick={() => {
+          {['深夜电台', '共同经历', '生活服务', '小小仪式'].map((label, index) => <button key={label} onClick={() => {
             const panel = foyer.current
             if (panel) panel.scrollLeft = panel.clientWidth * index
           }}>{label}</button>)}
@@ -768,8 +773,9 @@ function App() {
       {screen === 'moments' && <MomentsScreen api={api} onError={message => setError(message)} character={character} avatar={<Avatar config={avatarConfig} size={34} />} />}
       {screen === 'avatar' && <AvatarScreen api={api} onError={message => setError(message)} characterId={character?.id} characterName={character?.name ?? 'TA'} onSaved={config => setAvatarOverride(config)} onClose={() => { setError(''); setScreen('me') }} />}
       {screen === 'services' && <ServicesScreen api={api} onError={message => setError(message)} services={services} />}
-      {(screen === 'discover' || screen === 'me' || screen === 'moments' || screen === 'avatar' || screen === 'services') && <nav className="tabbar" aria-label="主导航">
-        <button type="button" className={screen === 'discover' || screen === 'services' ? 'active' : ''} onClick={() => { setError(''); setScreen('discover') }}>玄关</button>
+      {screen === 'rituals' && <RitualsScreen api={api} onError={message => setError(message)} character={character} />}
+      {(screen === 'discover' || screen === 'me' || screen === 'moments' || screen === 'avatar' || screen === 'services' || screen === 'rituals') && <nav className="tabbar" aria-label="主导航">
+        <button type="button" className={screen === 'discover' || screen === 'services' || screen === 'rituals' ? 'active' : ''} onClick={() => { setError(''); setScreen('discover') }}>玄关</button>
         <button type="button" className={screen === 'moments' ? 'active' : ''} onClick={() => { setError(''); setScreen('moments') }}>朋友圈</button>
         <button type="button" className={screen === 'me' || screen === 'avatar' ? 'active' : ''} onClick={() => { setError(''); setScreen('me') }}>我的</button>
       </nav>}

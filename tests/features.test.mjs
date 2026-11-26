@@ -196,6 +196,122 @@ test('分析事件白名单对旧库自动迁移扩展', async t => {
   assert.equal(db.prepare("SELECT count(*) n FROM trial_events WHERE event = 'mood_checkin'").get().n, 1)
 })
 
+test('每日信箱：生成/幂等/已读加分/隔离', async t => {
+  const app = createApp(':memory:', async () => '这是写给你的第七封信：今晚的海比昨天安静。', { access: developmentPolicy() })
+  t.after(() => app.emit('close'))
+  const request = makeClient(app)
+  const cookie = await session(request)
+  const first = await request('letters', {}, cookie)
+  assert.equal(first.status, 200)
+  assert.equal(first.json().letter.content, '这是写给你的第七封信：今晚的海比昨天安静。')
+  assert.equal(first.json().letter.readAt, null)
+  const again = await request('letters', {}, cookie)
+  assert.equal(again.json().already, true)
+  assert.equal(again.json().letter.id, first.json().letter.id)
+  // 读信 +2
+  assert.equal((await request('bond', null, cookie)).json().points, 0)
+  const read = await request('letters/' + first.json().letter.id + '/read', {}, cookie)
+  assert.equal(read.status, 200)
+  assert.ok(read.json().letter.readAt)
+  assert.equal((await request('bond', null, cookie)).json().points, 2)
+  // 重复读不重复加分
+  await request('letters/' + first.json().letter.id + '/read', {}, cookie)
+  assert.equal((await request('bond', null, cookie)).json().points, 2)
+  // 列表与线程隔离
+  assert.equal((await request('letters', null, cookie)).json().letters.length, 1)
+  const other = await session(request)
+  assert.equal((await request('letters', null, other)).json().letters.length, 0)
+  assert.equal((await request('letters/' + first.json().letter.id + '/read', {}, other)).status, 404)
+})
+
+test('河灯许愿与纪念日：加分封顶/校验/倒计时/删除隔离', async t => {
+  let clock = new Date('2026-11-26T20:00:00Z')
+  const app = createApp(':memory:', async () => 'x', { access: developmentPolicy(), clock: () => clock })
+  t.after(() => app.emit('close'))
+  const request = makeClient(app)
+  const cookie = await session(request)
+  // 前 3 次许愿每次 +2，之后不再加分
+  for (let i = 0; i < 3; i++) {
+    const wish = await request('wishes', { content: '愿望' + i }, cookie)
+    assert.equal(wish.status, 200)
+    assert.ok(wish.json().wish.blessing.length > 0)
+  }
+  assert.equal((await request('bond', null, cookie)).json().points, 6)
+  await request('wishes', { content: '第四个愿望' }, cookie)
+  assert.equal((await request('bond', null, cookie)).json().points, 6)
+  // 校验
+  assert.equal((await request('wishes', { content: '' }, cookie)).status, 400)
+  assert.equal((await request('wishes', { content: 'x'.repeat(121) }, cookie)).status, 400)
+  assert.equal((await request('wishes', null, cookie)).json().wishes.length, 4)
+  // 纪念日：倒计时与每年重复
+  assert.equal((await request('anniversaries', { title: '第一次见面', date: '2026-12-01' }, cookie)).status, 200)
+  const rows = (await request('anniversaries', null, cookie)).json().anniversaries
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].daysLeft, 4) // 上海时区 11-27 凌晨，至 12-01 剩 3 天 20 小时，四舍五入
+  assert.equal(rows[0].repeatYearly, 1)
+  assert.equal((await request('anniversaries', { title: '', date: '2026-12-01' }, cookie)).status, 400)
+  assert.equal((await request('anniversaries', { title: 'x', date: '2026/12/01' }, cookie)).status, 400)
+  assert.equal((await request('anniversaries', { title: 'x', date: '2026-13-01' }, cookie)).status, 400)
+  // 删除：他人不可删
+  const id = rows[0].id
+  const other = await session(request)
+  assert.equal((await request('anniversaries/' + id, null, other, 'DELETE')).status, 404)
+  assert.equal((await request('anniversaries/' + id, null, cookie, 'DELETE')).status, 200)
+  assert.equal((await request('anniversaries', null, cookie)).json().anniversaries.length, 0)
+})
+
+test('小礼物：每日两份封顶/加分/目录/跨日恢复', async t => {
+  let clock = new Date('2026-11-26T20:00:00Z')
+  const app = createApp(':memory:', async () => 'x', { access: developmentPolicy(), clock: () => clock })
+  t.after(() => app.emit('close'))
+  const request = makeClient(app)
+  const cookie = await session(request)
+  const catalog = (await request('gifts', null, cookie)).json()
+  assert.equal(catalog.today, 0)
+  assert.equal(catalog.limit, 2)
+  assert.ok(catalog.kinds.length >= 4)
+  const first = await request('gifts', { kind: 'cocoa' }, cookie)
+  assert.equal(first.status, 200)
+  assert.ok(first.json().gift.reply.length > 0)
+  assert.equal(first.json().gift.name, '一杯热可可')
+  assert.equal(first.json().today, 1)
+  const second = await request('gifts', { kind: 'lantern' }, cookie)
+  assert.equal(second.json().today, 2)
+  assert.equal((await request('bond', null, cookie)).json().points, 16) // 两份 ×8
+  // 当日第三份被拒，不加不减
+  assert.equal((await request('gifts', { kind: 'note' }, cookie)).status, 400)
+  assert.equal((await request('gifts', { kind: 'nope' }, cookie)).status, 400)
+  assert.equal((await request('bond', null, cookie)).json().points, 16)
+  assert.equal((await request('gifts', null, cookie)).json().today, 2)
+  // 次日恢复
+  clock = new Date('2026-11-27T20:00:00Z')
+  assert.equal((await request('gifts', null, cookie)).json().today, 0)
+})
+
+test('受控模式信笺走 letter 网关并降级', async t => {
+  const f = fixture(t)
+  const db = new DatabaseSync(f.env.SQLITE_PATH)
+  f.after(() => db.close())
+  const app = createApp(f.env.SQLITE_PATH, async () => '今晚的信写得慢了些，海风替我磨了墨。', { access: f.policy, clock: () => new Date('2026-11-26T00:00:00Z') })
+  f.after(() => app.emit('close'))
+  const request = makeClient(app)
+  const cookie = await session(request, undefined, f.token)
+  db.exec('UPDATE runtime_control SET callsEnabled=1')
+  const letter = await request('letters', {}, cookie)
+  assert.equal(letter.json().letter.content, '今晚的信写得慢了些，海风替我磨了墨。')
+  assert.equal(db.prepare("SELECT state FROM call_attempts WHERE operation='letter'").get().state, 'success')
+  // 停写后第二个主体降级为模板信笺，不再新增 letter 尝试
+  db.exec('UPDATE runtime_control SET callsEnabled=0')
+  const { createHash } = await import('node:crypto')
+  const token2 = 'c'.repeat(64)
+  f.save([{ ...f.invite, tokenId: 'letter-other', subjectId: 'letter-other', digest: createHash('sha256').update(token2).digest('hex') }])
+  const other = await session(request, undefined, token2)
+  const degraded = await request('letters', {}, other)
+  assert.equal(degraded.status, 200)
+  assert.ok(degraded.json().letter.content.length > 0)
+  assert.equal(db.prepare("SELECT count(*) n FROM call_attempts WHERE operation='letter'").get().n, 1)
+})
+
 test('朋友圈：发布/点赞/评论/角色发动态每日一次', async t => {
   const app = createApp(':memory:', async () => '角色的一条动态正文\n随想', { access: developmentPolicy() })
   t.after(() => app.emit('close'))
