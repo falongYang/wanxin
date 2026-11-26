@@ -37,7 +37,10 @@ export function loadPolicy(env = process.env) {
     origin = new URL(env.PUBLIC_ORIGIN)
     limits = JSON.parse(env.ACCESS_LIMITS)
   } catch { rejectConfig() }
-  if (origin.origin !== env.PUBLIC_ORIGIN || origin.protocol !== 'https:') rejectConfig()
+  // Interim IP trial only: an explicitly acknowledged flag permits an http://
+  // PUBLIC_ORIGIN (cleartext transport). Remove once a domain + TLS is in place.
+  const insecure = env.ACCESS_ALLOW_INSECURE_ORIGIN === 'true'
+  if (origin.origin !== env.PUBLIC_ORIGIN || (origin.protocol !== 'https:' && !insecure)) rejectConfig()
   for (const key of ['subjectDaily', 'globalDaily', 'subjectMinute', 'globalMinute', 'inFlight', 'redeemSource', 'redeemGlobal', 'endpointMinute']) {
     if (!Number.isSafeInteger(limits[key]) || limits[key] < 1 || limits[key] > 1000000) rejectConfig()
   }

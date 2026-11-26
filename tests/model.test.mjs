@@ -17,3 +17,14 @@ test('native Ollama disables thinking and exposes only reply content', async (t)
   const reply = createModel({ MODEL_MODE: 'ollama', MODEL_API_URL: url, MODEL_NAME: 'qwen3.5:4b' })
   assert.equal(await reply([{ role: 'user', content: '今晚风很大。' }]), '风声很近吗？')
 })
+
+test('custom persona becomes the system message for OpenAI-compatible models', async (t) => {
+  const url = 'https://api.example/chat/completions'
+  t.mock.method(globalThis, 'fetch', async (endpoint, init) => {
+    const body = JSON.parse(init.body)
+    assert.deepEqual(body.messages[0], { role: 'system', content: '你是顾川，虚构的旧书店店主。' })
+    return Response.json({ choices: [{ message: { content: '书架第三排有一盏灯。' } }] })
+  })
+  const reply = createModel({ MODEL_API_URL: url, MODEL_NAME: 'deepseek-chat', MODEL_API_KEY: 'test-key' })
+  assert.equal(await reply([{ role: 'user', content: '今晚有什么书' }], undefined, '你是顾川，虚构的旧书店店主。'), '书架第三排有一盏灯。')
+})

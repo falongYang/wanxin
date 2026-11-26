@@ -1,0 +1,25 @@
+# 晚信 Node API 的 systemd 单元示例（单实例托管）。
+# 将 API 目录替换为实际部署路径（如 /var/www/wanxin/server/）。
+# 数据与私密配置只放 owner 批准的受限路径；EnvironmentFile 不含密钥值，仅路径/模式。
+# 升级或接管前必须人工确认旧进程已终止：本单元依赖 acquireInstanceLock 拒绝第二实例，
+# 不会自动删除陈旧锁。
+
+[Unit]
+Description=Wanxin AI companion API (single instance)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wanxin           # TODO: service account with restricted write to data dir
+WorkingDirectory=/var/www/wanxin/server
+EnvironmentFile=-/etc/wanxin/env
+ExecStart=/usr/bin/node --env-file-if-exists=/etc/wanxin/env server/index.mjs
+Restart=on-failure
+RestartSec=3
+# Do not let a dying process mask the real failure
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

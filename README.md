@@ -10,13 +10,13 @@
 
 ## D1 本地运行
 
-使用 Node 22.13 或更新版本。执行 `npm install` 后，在两个终端分别运行
-`APP_ACCESS_MODE=development MODEL_MODE=stub npm run api` 和 `npm run dev`，再打开 Vite 打印的本地地址。
+使用 Node 22.13 或更新版本。执行 `npm install` 后，在两个终端分别运行  
+`APP_ACCESS_MODE=development MODEL_MODE=stub npm run api` 和 `npm run dev`，再打开 Vite 打印的本地地址。  
 `npm test` 运行 SQLite 聊天集成用例，`npm run build` 检查类型并构建前端。
 
-测试模式会标记为「测试回复」。接入真实模型时，在服务端设置
-`MODEL_API_URL`（完整 Chat Completions 地址）、`MODEL_API_KEY` 和 `MODEL_NAME`，
-并移除 `MODEL_MODE=stub`。SQLite 默认写入 `data/wanxin.sqlite`，
+测试模式会标记为「测试回复」。接入真实模型时，在服务端设置  
+`MODEL_API_URL`（完整 Chat Completions 地址）、`MODEL_API_KEY` 和 `MODEL_NAME`，  
+并移除 `MODEL_MODE=stub`。SQLite 默认写入 `data/wanxin.sqlite`，  
 可用 `SQLITE_PATH` 指定路径。
 
 ### 本机 Ollama 实测
@@ -42,6 +42,20 @@ MODEL_MODE=ollama MODEL_API_URL=http://127.0.0.1:11434/api/chat MODEL_NAME=qwen3
 
 共同经历支持[内存搜索与上海月份分组](docs/card-library.md)，详情返回保留查询和列表位置。
 
-线上部署环境：远端 101.42.26.83，分两处：•前端（nginx 实际服务路径）：/var/www/ant-epoch/wanxin/•后
-端：/var/www/wanxin/server/（现 6 个 .mjs）nginx root 是 /var/www/ant-epoch
-github地址：https://github.com/falongYang/wanxin
+## 支持能力（本地已验证）
+
+- **多角色**：发现页可选开场角色（林舟/顾川/孙晚），按所选角色创建线程并沿用其开场与开聊建议。
+- **真实模型卡片预览**：`card-preview` 走受控 `reserve/settle` 网关（`operation='preview'`），失败降级到本地摘句，可编辑后保存。
+- **语音输入**：聊天框「语音」按钮使用浏览器 Web Speech API 语音转文字（无外部付费 ASR）；不支持时提示手动输入。
+
+## 生产部署
+
+[部署指南与模板](docs/deploy/production.md)含 nginx HTTPS、systemd、健康检查、环境变量、owner 清单。上线前运行 `node scripts/deploy/healthcheck.mjs` 应 0 项 FAIL；三闸门（PM 双视口+候选哈希、owner 真机、owner 群内点名）齐备前不开放入口。
+
+**当前线上（2026-11-26 起受控试用，HTTP 临时通道）**：`http://101.42.26.83/wanxin/`，受控邀请 + DeepSeek（deepseek-chat）真实模型，[部署记录](docs/deploy/deployment-2026-11-26.md)。服务器端私密配置：`/etc/wanxin/env`（root 0600）、`/var/www/wanxin/private/invites.json`；服务 `wanxin.service`；重启命令 `sudo service wanxin restart`。上域名+TLS 后移除 `ACCESS_ALLOW_INSECURE_ORIGIN`。
+
+线上部署环境：远端 101.42.26.83，分两处：•前端（nginx 实际服务路径）：/var/www/ant-epoch/wanxin/•后  
+端：/var/www/wanxin/server/（现 6 个 .mjs）nginx root 是 /var/www/ant-epoch  
+github地址：<https://github.com/falongYang/wanxin>
+
+> AI生成

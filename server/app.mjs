@@ -3,11 +3,10 @@ import { createUsage } from './usage.mjs'
 import { acquireInstanceLock } from './instance-lock.mjs'
 import { createAccess, ControlError } from './access.mjs'
 import { createAnalytics } from './analytics.mjs'
+import { characters, defaultCharacterId, characterById, summarizeCharacter } from './characters.js'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { DatabaseSync } from 'node:sqlite'
-
-const opening = '今晚的节目还没开始。你想先点一首歌，还是说说今天？'
 
 async function readBody(request) {
   let body = ''
@@ -18,7 +17,7 @@ async function readBody(request) {
   try { return JSON.parse(body) } catch { return null }
 }
 
-export function createApp(filename, reply, { secure = false, timeoutMs = 15000, weather, access, logger, clock = () => new Date() } = {}) {
+export function createApp(filename, reply, { secure = false, timeoutMs = 15000, weather, access, logger, clock = () => new Date(), summarize } = {}) {
   if (!access) throw new Error('Explicit access policy required')
   if (access.mode === 'invitation' && filename === ':memory:') throw new Error('Controlled mode requires persistent storage')
   const release = filename !== ':memory:' ? acquireInstanceLock(filename) : () => {}
@@ -80,7 +79,8 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
   const pinMessage = db.prepare('INSERT INTO message_pins VALUES (?, ?) ON CONFLICT(messageId) DO NOTHING')
   const unpinMessage = db.prepare('DELETE FROM message_pins WHERE messageId = ?')
   const prior = db.prepare('SELECT id, content, sourceCardId FROM messages WHERE threadId = ? AND role = ? AND requestId = ?')
-  const findThread = db.prepare('SELECT id FROM threads WHERE visitorId = ?')
+  const findThread = db.prepare('SELECT id, characterId FROM threads WHERE visitorId = ?')
+  const threadCharacter = db.prepare('SELECT characterId FROM threads WHERE id = ?')
   const pending = new Map()
   const telemetry = createTelemetry(logger)
   telemetry.emit({ event: 'startup' })
@@ -103,6 +103,57 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
     const text = typeof body?.body === 'string' ? body.body.trim() : ''
     return title && text && Array.from(title).length <= 60 && Array.from(text).length <= 1000
       ? [title, text] : null
+  }
+
+  const fallbackSummary = content => ({
+    title: Array.from(content.trim().replace(/\s+/g, ' ')).slice(0, 24).join(''),
+    body: Array.from(content.match(/[^。！？!?\n]+[。！？!?]*/g)?.slice(0, 3).join('') || content).slice(0, 1000).join(''),
+  })
+
+  // Real-model card preview goes through the same reserve/settle quota gateway as
+  // messages (operation='preview'), and degrades to the local extraction on any
+  // failure so a card can always be edited and saved manually.
+  async function previewSummary(key, source) {
+    let attempt = null
+    if (summarize && authorization.controlled) {
+      usage.transaction(() => {
+        const subject = authorization.authorize(key)
+        attempt = usage.reserve(subject, authorization.digest('preview:' + source.id), 'preview')
+      })
+    }
+    const fallback = () => fallbackSummary(source.content)
+    if (!summarize) return { attempt, summary: fallback() }
+    const controller = new AbortController()
+    const started = Date.now()
+    let timedOut = false
+    let timer
+    try {
+      const model = Promise.resolve().then(() => summarize(source.content, controller.signal)).then(result => {
+        if (!result || typeof result.title !== 'string' || typeof result.body !== 'string') throw new Error('Invalid model summary')
+        return result
+      })
+      const summary = await Promise.race([
+        model,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            timedOut = true
+            try { usage.timeout(attempt) } catch { telemetry.emit({ event: 'control_error' }) }
+            telemetry.emit({ event: 'model_timeout', durationMs: Date.now() - started })
+            controller.abort()
+            reject(new Error('Timed out'))
+          }, timeoutMs)
+        }),
+      ])
+      usage.settle(attempt, 'success')
+      if (!timedOut) telemetry.emit({ event: 'model_success', durationMs: Date.now() - started })
+      return { attempt, summary: summary, model: summary }
+    } catch (error) {
+      usage.settle(attempt, 'error')
+      if (!timedOut) telemetry.emit({ event: 'model_error', durationMs: Date.now() - started })
+      return { attempt, summary: fallback() }
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   async function generate(threadId, user, requestId, card, attempt, job) {
@@ -132,7 +183,12 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
     let timedOut = false
     let timer
     try {
-      const model = Promise.resolve().then(() => reply(modelMessages, controller.signal)).then(content => {
+      const model = Promise.resolve().then(() => {
+        // Persona follows the thread's character; unknown characters fall back to 林舟.
+        const characterId = threadCharacter.get(threadId)?.characterId
+        return reply(modelMessages, controller.signal, characterById(characterId)?.persona
+          ?? characterById(defaultCharacterId).persona)
+      }).then(content => {
         if (typeof content !== 'string' || !content.trim()) throw new Error('Empty model reply')
         return content
       })
@@ -185,20 +241,32 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
     response.controlStarted = Date.now()
     telemetry.ensure()
     const key = request.headers.cookie?.match(/(?:^|;\s*)wanxin=([a-f0-9-]{36})(?:;|$)/)?.[1]
-    let threadId = key && findThread.get(key)?.id
+    const threadRow = key ? findThread.get(key) : undefined
+    let threadId = threadRow?.id
     const route = request.method + ' ' + url.pathname
     if (route === 'GET /api/session') {
       if (threadId) { try { authorization.authorize(key) } catch (error) {
         if (error.status !== 403) throw error
         threadId = null
       } }
-      return json(response, 200, { accessRequired: authorization.controlled, threadId: threadId || null, character: '林舟', ...(weather && { weatherAvailable: true }) })
+      return json(response, 200, {
+        accessRequired: authorization.controlled,
+        threadId: threadId || null,
+        character: threadId ? characterById(threadRow.characterId)?.name ?? '林舟' : undefined,
+        characters: characters.map(summarizeCharacter),
+        ...(weather && { weatherAvailable: true }),
+      })
+    }
+    if (route === 'GET /api/characters') {
+      return json(response, 200, { characters: characters.map(summarizeCharacter) })
     }
     if (request.method !== 'GET') authorization.checkWrite(request)
     if (route === 'POST /api/session') {
       usage.redeemRate(authorization.source(request))
       const admission = await readBody(request)
       if (admission?.adult !== true) return json(response, 400, { error: '请先确认成年' })
+      const selectedCharacter = admission?.characterId == null ? defaultCharacterId : admission.characterId
+      if (typeof selectedCharacter !== 'string' || !characterById(selectedCharacter)) return json(response, 400, { error: '角色不可用' })
       if (threadId) {
         try { authorization.authorize(key) } catch (error) {
           if (!(error instanceof ControlError) || error.code !== 'invitation_required' || !admission.inviteToken) throw error
@@ -214,8 +282,8 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
         try {
           db.prepare('INSERT INTO visitors VALUES (?, ?, ?)').run(visitor, now, now)
           authorization.redeem(visitor, admission.inviteToken)
-          db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?)').run(threadId, visitor, 'lin-zhou', now)
-          insert.run(randomUUID(), threadId, 'assistant', opening, null, 'complete', null, now)
+          db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?)').run(threadId, visitor, selectedCharacter, now)
+          insert.run(randomUUID(), threadId, 'assistant', characterById(selectedCharacter).opening, null, 'complete', null, now)
           db.exec('COMMIT')
         } catch (error) {
           db.exec('ROLLBACK')
@@ -223,7 +291,7 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
         }
         response.setHeader('Set-Cookie', 'wanxin=' + visitor + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000' + (secure ? '; Secure' : ''))
       }
-      return json(response, 200, { threadId, ...(weather && { weatherAvailable: true }) })
+      return json(response, 200, { threadId, character: characterById(selectedCharacter).name, ...(weather && { weatherAvailable: true }) })
     }
     if (!threadId && authorization.controlled) throw new ControlError(403, 'invitation_required')
     if (threadId && route !== 'DELETE /api/session') {
@@ -307,11 +375,8 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
       if (!source) return json(response, 404, {})
       if (route === 'POST /api/card-preview') {
         analytics.record(key, 'card_preview')
-        return json(response, 200, {
-          title: Array.from(source.content.trim().replace(/\s+/g, ' ')).slice(0, 24).join(''),
-          body: Array.from(source.content.match(/[^。！？!?\n]+[。！？!?]*/g)?.slice(0, 3).join('') || source.content).slice(0, 1000).join(''),
-          createdAt: source.createdAt,
-        })
+        const { summary, model } = await previewSummary(key, source)
+        return json(response, 200, { ...(model ?? summary), createdAt: source.createdAt })
       }
       const fields = cardFields(body)
       if (!fields) return json(response, 400, { error: '请输入标题和正文' })

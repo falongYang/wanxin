@@ -11,11 +11,14 @@ const model = createModel()
 const database = process.env.SQLITE_PATH || 'data/wanxin.sqlite'
 mkdirSync(dirname(database), { recursive: true })
 const port = Number(process.env.API_PORT || 3001)
+const envTimeout = Number(process.env.MODEL_TIMEOUT_MS)
 const app = createApp(database, model, {
   access,
   weather: process.env.WEATHER_PROVIDER === 'open-meteo' ? createOpenMeteoWeather() : undefined,
   secure: process.env.NODE_ENV === 'production',
-  timeoutMs: process.env.MODEL_MODE === 'ollama' ? 200_000 : undefined,
+  timeoutMs: Number.isFinite(envTimeout) && envTimeout >= 1000 ? envTimeout
+    : process.env.MODEL_MODE === 'ollama' ? 200_000 : undefined,
+  summarize: model.summarize,
 })
   .listen(port, '127.0.0.1')
 app.on('error', () => {

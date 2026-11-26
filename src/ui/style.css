@@ -262,3 +262,27 @@ summary { cursor: pointer; }
 }
 .lantern-river .card-list-item:nth-child(odd) { border-inline-start: 3px solid var(--warm); }
 .lantern-river .card-list-item:nth-child(even) { border-inline-end: 3px solid var(--warm); }
+
+.character-pick {
+  display: grid;
+  gap: .5rem;
+  margin: .9rem 0;
+  padding: .9rem .8rem;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+.character-pick legend { padding-inline: .4rem; color: var(--muted); font-size: .8rem; }
+.character-option {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  padding: .6rem .7rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.character-option input { accent-color: var(--gold); }
+.character-option span { color: var(--muted); font-size: .82rem; margin-inline-start: auto; }
+.character-option.active { border-color: var(--gold); background: rgba(217,186,133,.1); }
+.character-option:focus-within { outline: 2px solid var(--gold); outline-offset: 2px; }
+.voice { min-width: 3rem; }

@@ -18,6 +18,7 @@ type Submission = { requestId: string; text: string; sourceCardId?: string | nul
 type QueuedMessage = { id: string; text: string }
 type Card = { id: string; sourceMessageId: string; title: string; body: string; createdAt: string; sourceContent?: string }
 type CardDraft = Pick<Card, 'sourceMessageId' | 'title' | 'body' | 'createdAt'> & { id?: string; sourceContent: string }
+type Character = { id: string; name: string; scene: string; intro: string; opening: string; suggestions: [string, string][] }
 
 class ApiError extends Error {
   constructor(readonly status: number, message: string, readonly code = '', readonly retryAfter = '') { super(message) }
@@ -26,12 +27,6 @@ class ApiError extends Error {
 function newRequestId() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')
 }
-
-const suggestions = [
-  ['聊聊今天', '我想说说今天发生的一件事。'],
-  ['给今晚点首歌', '我想给今晚点一首歌。'],
-  ['接一段电台故事', '今晚的电台有什么故事？'],
-]
 
 async function api<T>(path: string, data?: unknown, method = data === undefined ? 'GET' : 'POST'): Promise<T> {
   const response = await fetch('/api/' + path, {
@@ -129,13 +124,13 @@ function ConversationDrawer({ messages, busy, togglePin }: {
   </details>
 }
 
-function ReplyActivity({ message }: { message: Message }) {
+function ReplyActivity({ message, name = '角色' }: { message: Message; name?: string }) {
   return <details className="activity">
     <summary>回复过程</summary>
     <ol>
       <li>读取本次消息及 {message.contextCount} 条近期消息</li>
       {message.sourceCardId && <li>加入你选中的经历卡</li>}
-      <li>生成并保存林舟的回复</li>
+      <li>生成并保存{name}的回复</li>
     </ol>
   </details>
 }
@@ -151,6 +146,9 @@ function App() {
   const [inviteToken, setInviteToken] = useState('')
   const [admissionNeeded, setAdmissionNeeded] = useState(false)
   const [weatherAvailable, setWeatherAvailable] = useState(false)
+  const [characters, setCharacters] = useState<Character[]>([])
+  const [character, setCharacter] = useState<Character | null>(null)
+  const [pickedId, setPickedId] = useState('lin-zhou')
   const [theme, setTheme] = useState(() => new Date().getHours() >= 6 && new Date().getHours() < 12 ? 'morning' : 'night')
   const foyer = useRef<HTMLDivElement>(null)
   const [returnFromCards, setReturnFromCards] = useState<'chat' | 'discover'>('chat')
@@ -179,13 +177,20 @@ function App() {
   const input = useRef<HTMLTextAreaElement>(null)
   const bottom = useRef<HTMLDivElement>(null)
   const sending = useRef(false)
+  const [listening, setListening] = useState(false)
 
   async function load() {
     setError('')
     try {
-      const session = await api<{ threadId: string | null; weatherAvailable?: boolean; accessRequired?: boolean }>('session')
+      const session = await api<{ threadId: string | null; character?: string; characters?: Character[]; weatherAvailable?: boolean; accessRequired?: boolean }>('session')
       setAccessRequired(!!session.accessRequired)
       setWeatherAvailable(!!session.weatherAvailable)
+      if (session.characters?.length) {
+        setCharacters(session.characters)
+        const current = session.character ? session.characters.find(item => item.name === session.character) : undefined
+        setCharacter(current ?? session.characters[0] ?? null)
+        setPickedId(current?.id ?? 'lin-zhou')
+      }
       setScreen(session.threadId ? 'discover' : 'gate')
     } catch {
       setError('暂时无法连接，请重试。')
@@ -271,8 +276,10 @@ function App() {
     setBusy(true)
     setError('')
     try {
-      const session = await api<{ weatherAvailable?: boolean }>('session', { adult: true, inviteToken: inviteToken || undefined })
+      const chosen = characters.find(item => item.id === pickedId)
+      const session = await api<{ weatherAvailable?: boolean; character?: string }>('session', { adult: true, inviteToken: inviteToken || undefined, characterId: chosen?.id })
       setWeatherAvailable(!!session.weatherAvailable)
+      setCharacter(chosen ?? null)
       setAdmissionNeeded(false)
       setScreen('discover')
     } catch (error) {
@@ -373,6 +380,31 @@ function App() {
     setDraft('')
   }
 
+  function startVoice() {
+    const Ctor = (window as unknown as { SpeechRecognition?: new () => any; webkitSpeechRecognition?: new () => any })
+    const Recognition = Ctor.SpeechRecognition || Ctor.webkitSpeechRecognition
+    if (!Recognition) { setError('当前浏览器不支持语音输入，可以手动输入。'); return }
+    setError('')
+    setListening(true)
+    const recognition = new Recognition()
+    recognition.lang = 'zh-CN'
+    recognition.interimResults = false
+    recognition.maxAlternatives = 1
+    recognition.onresult = (event: { results?: ArrayLike<ArrayLike<{ transcript?: string } | undefined>> }) => {
+      const text = event.results?.[0]?.[0]?.transcript ?? ''
+      if (text) setDraft(previous => Array.from((previous + ' ' + text).trim()).slice(0, 1000).join(''))
+    }
+    recognition.onerror = () => {
+      setListening(false)
+      setError('没有听清，可以再试一次。')
+    }
+    recognition.onend = () => setListening(false)
+    try { recognition.start() } catch {
+      setListening(false)
+      setError('语音输入未能启动，可以手动输入。')
+    }
+  }
+
   function sendQueued(items: QueuedMessage[]) {
     if (!items.length || busy || failed || editing) return
     const text = items.map(item => item.text).join('\n')
@@ -456,7 +488,7 @@ function App() {
   }
 
   async function clearSession() {
-    if (!window.confirm('清除与林舟的聊天记录和全部共同经历？') ||
+    if (!window.confirm(`清除与${character?.name ?? '角色'}的聊天记录和全部共同经历？`) ||
         !window.confirm('清除后无法恢复。确认清除？')) return
     await cardAction(async () => {
       await api('session', undefined, 'DELETE')
@@ -497,17 +529,17 @@ function App() {
     {screen === 'chat' ? <>
       <header className="chat-header">
         <button type="button" disabled={busy} onClick={() => { setError(''); setScreen('discover') }}>返回</button>
-        <div><strong>林舟</strong><small>AI 虚构角色</small></div>
+        <div><strong>{character?.name ?? '角色'}</strong><small>AI 虚构角色</small></div>
         <button type="button" disabled={busy} onClick={() => { setReturnFromCards('chat'); void cardAction(showCards) }}>共同经历</button>
         <details className="chat-menu"><summary>菜单</summary>
           <button type="button" disabled={busy} onClick={() => void clearSession()}>清除会话</button>
         </details>
       </header>
-      <section className="history" aria-label="聊天记录"><p className="history-intro">深夜电台 · 想说的话，这里都听得到</p>
+      <section className="history" aria-label="聊天记录"><p className="history-intro">{character?.scene ?? '深夜 · 想说的话，这里都听得到'}</p>
         <ConversationDrawer messages={messages} busy={busy} togglePin={message => void togglePin(message)} />
         {messages.map(message => <div id={'message-' + message.id} tabIndex={-1} className={'bubble ' + message.role + (highlighted === message.id ? ' source-highlight' : '')} key={message.id}>
           {message.content}
-          {message.contextCount != null && <ReplyActivity message={message} />}
+          {message.contextCount != null && <ReplyActivity message={message} name={character?.name} />}
           {message.role === 'user' && message.status === 'complete' && <div className="message-tools">
             <button type="button" className="message-trigger" aria-label="消息操作" aria-haspopup="menu"
               aria-expanded={messageMenu === message.id} aria-controls={messageMenu === message.id ? 'message-menu' : undefined}
@@ -532,7 +564,7 @@ function App() {
       </section>
       <div className="composer">
         {!messages.some(message => message.role === 'user') && <div className="suggestions">
-          {suggestions.map(([label, text]) => <button key={label} type="button" onClick={() => { setDraft(text); input.current?.focus() }}>{label}</button>)}
+          {(character?.suggestions ?? []).map(([label, text]) => <button key={label} type="button" onClick={() => { setDraft(text); input.current?.focus() }}>{label}</button>)}
         </div>}
         {error && <p role="alert">{error}</p>}
       {showAdmission && <button type="button" onClick={() => setScreen('gate')}>重新确认邀请</button>}
@@ -571,6 +603,8 @@ function App() {
               }
             }}
             onChange={event => setDraft(Array.from(event.target.value).slice(0, 1000).join(''))} />
+          <button type="button" className="voice" disabled={busy || listening} onClick={startVoice}
+            aria-label="语音输入">{listening ? '正在听…' : '语音'}</button>
           <button disabled={busy || !draft.trim() || !!failed} type="button" onClick={enqueue}>{editing ? '保存' : '待发'}</button>
           {editing
             ? <button type="button" onClick={() => { setEditing(null); setDraft('') }}>取消</button>
@@ -594,7 +628,7 @@ function App() {
           </div>
         </div>
         <p className="card-count" role="status">{cardQuery.trim() ? `找到 ${visibleCards.length} 段共同经历` : `共 ${cards.length} 段共同经历`}</p>
-        {cards.length === 0 && <p className="muted">这里会收好你与林舟的片段。<br />回到聊天，选择想留下的消息做成经历卡。</p>}
+        {cards.length === 0 && <p className="muted">这里会收好你与{character?.name ?? '角色'}的片段。<br />回到聊天，选择想留下的消息做成经历卡。</p>}
         {cards.length > 0 && visibleCards.length === 0 && <p className="muted">没有找到这个片段，换个关键词或清空搜索试试。</p>}
         {cardGroups.map(group => <section className="card-month" aria-label={group.label} key={group.key}>
           <h2>{group.label}<small>{group.cards.length} 段</small></h2>
@@ -664,6 +698,13 @@ function App() {
       {screen === 'loading' && (error ? <button onClick={() => void load()}>重试</button> : <p role="status">正在打开晚信…</p>)}
       {screen === 'gate' && <section className="intro">
         <h1>欢迎来到晚信</h1><p>晚信面向成年人。你将与 AI 虚构角色对话。</p>
+        {characters.length > 0 && <fieldset className="character-pick">
+          <legend>选择今晚想见的人</legend>
+          {characters.map(item => <label key={item.id} className={'character-option' + (pickedId === item.id ? ' active' : '')}>
+            <input type="radio" name="character" checked={pickedId === item.id} onChange={() => setPickedId(item.id)} />
+            <strong>{item.name}</strong><span>{item.scene}</span>
+          </label>)}
+        </fieldset>}
         {accessRequired && <label className="invite-input">邀请码<input type="password" aria-label="邀请码" autoComplete="off" maxLength={256}
           value={inviteToken} onChange={event => setInviteToken(event.target.value)} /></label>}
         {accessRequired && <p className="footnote">邀请码仅可兑换一次。清除会话或丢失浏览器身份后，请联系邀请人补发。</p>}
@@ -677,14 +718,14 @@ function App() {
         {weatherAvailable && <Weather city={city} selectCity={setCity} />}
         <div className="foyer" ref={foyer}>
           <article>
-            <div className="radio-scene" aria-hidden="true"><span>海边 · 深夜电台</span></div>
-            <p className="scene">深夜电台</p><h1>林舟</h1>
-            <small>AI 虚构角色</small><p>在海边值夜班的电台主播</p>
-            <blockquote>今晚的节目还没开始。你想先点一首歌，还是说说今天？</blockquote>
-            <button disabled={busy} onClick={() => void openChat()}>和林舟聊天</button>
+            <div className="radio-scene" aria-hidden="true"><span>{character?.scene ?? '深夜 · 晚信'}</span></div>
+            <p className="scene">{character?.scene?.split('·')[0].trim() ?? '深夜'}</p><h1>{character?.name ?? '角色'}</h1>
+            <small>AI 虚构角色</small><p>{character?.intro ?? ''}</p>
+            <blockquote>{character?.opening ?? ''}</blockquote>
+            <button disabled={busy} onClick={() => void openChat()}>和{character?.name ?? '角色'}聊天</button>
           </article>
           <article>
-            <h2>共同经历</h2><p>回看你和林舟留下的故事。</p>
+            <h2>共同经历</h2><p>回看你和{character?.name ?? '角色'}留下的故事。</p>
             <button disabled={busy} onClick={() => { setReturnFromCards('discover'); void cardAction(showCards) }}>打开共同经历</button>
           </article>
         </div>
