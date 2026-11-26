@@ -68,6 +68,8 @@ test('玄关仪表盘聚合：羁绊/心情/空数据安全', async t => {
   assert.equal(home.wishes.count, 0)
   assert.equal(home.anniversaries.next, null)
   assert.equal(home.gifts.today, 0)
+  assert.equal(home.gifts.limit, 2)
+  assert.equal(home.met.days, 1) // 新线程当天即相遇第 1 天
 })
 
 test('受控模式心情回应走 letter 网关并落账', async t => {
@@ -321,6 +323,7 @@ test('朋友圈：发布/点赞/评论/角色发动态每日一次', async t => 
   const post = await request('moments', { content: '今天路过的书店还亮着灯。', moodTag: '开心' }, cookie)
   assert.equal(post.status, 200)
   assert.equal(post.json().moment.author, 'user')
+  assert.equal(post.json().moment.moodTag, '开心')
   assert.equal(post.json().moment.likes, 0)
   assert.equal((await request('bond', null, cookie)).json().points, 3)
   const momentId = post.json().moment.id
@@ -342,9 +345,10 @@ test('朋友圈：发布/点赞/评论/角色发动态每日一次', async t => 
   assert.equal(charMoment.json().moment.moodTag, '随想')
   const again = await request('moments/refresh', {}, cookie)
   assert.equal(again.json().already, true)
-  // 列表聚合评论与点赞
+  // 列表聚合评论与点赞，以及角色今日已发状态
   const feed = (await request('moments', null, cookie)).json()
   assert.equal(feed.moments.length, 2)
+  assert.equal(feed.characterToday, true)
   const mine = feed.moments.find(row => row.id === momentId)
   assert.equal(mine.comments.length, 1)
   assert.equal(mine.comments[0].content, '下次带我去。')
@@ -366,6 +370,7 @@ test('朋友圈线程隔离且清除会话后为空', async t => {
   assert.equal((await request('moments/' + id + '/like', {}, b)).status, 404)
   assert.equal((await request('moments/' + id + '/comment', { content: '随便看看' }, b)).status, 404)
   assert.equal((await request('moments', null, b)).json().moments.length, 0)
+  assert.equal((await request('moments', null, b)).json().characterToday, false)
   await request('session', null, a, 'DELETE')
   assert.equal((await request('moments', null, a)).status, 403)
 })

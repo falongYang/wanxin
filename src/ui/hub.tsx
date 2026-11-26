@@ -19,21 +19,34 @@ function formatDay(day: string) {
 }
 
 /* ---------- 羁绊进度条 ---------- */
-export function BondBar({ bond, compact }: { bond: Bond | null; compact?: boolean }) {
+export function BondBar({ bond, compact, showLevel }: { bond: Bond | null; compact?: boolean; showLevel?: boolean }) {
   if (!bond) return null
   return <div className={'bond' + (compact ? ' compact' : '')}>
     <div className="bond-head"><span>羁绊 · {bond.title}</span><small>{bond.points} 点 · Lv.{bond.level}</small></div>
-    <div className="bond-track"><i style={{ width: Math.min(100, Math.max(2, bond.progress)) + '%' }} /></div>
-    {!compact && bond.next && <small className="bond-next">再 {bond.next - bond.points} 点升级</small>}
+    <div className="bond-track"><i style={{ width: Math.min(100, Math.max(2, bond.progress)) + '%' }} /><em className="bond-orb" style={{ left: Math.min(100, Math.max(2, bond.progress)) + '%' }} /></div>
+    {!compact && bond.next && <small className="bond-next">再 {bond.next - bond.points} 点升为{showLevel === false ? '下一级' : LEVEL_TITLES[bond.level + 1] ?? '下一级'}</small>}
   </div>
 }
 
+const LEVEL_TITLES = ['初识', '点头之交', '熟悉', '陪伴', '牵挂', '灵魂共振']
+
+export type Home = {
+  bond: Bond
+  mood: { today: string | null; streak: number }
+  letters: { unread: number }
+  wishes: { count: number }
+  anniversaries: { next: { id: string; title: string; date: string; repeatYearly: 0 | 1; daysLeft: number } | null }
+  gifts: { today: number; limit: number }
+  met: { days: number }
+}
+
 /* ---------- 我的：心情打卡 + 羁绊 ---------- */
-export function MeScreen({ api, onError, character, refreshHome, avatar, onEditAvatar }: {
+export function MeScreen({ api, onError, character, refreshHome, home, avatar, onEditAvatar }: {
   api: Api
   onError: FeatureError
   character: Character | null
   refreshHome?: () => void
+  home?: Home | null
   avatar?: ReactNode
   onEditAvatar?: () => void
 }) {
@@ -74,12 +87,17 @@ export function MeScreen({ api, onError, character, refreshHome, avatar, onEditA
   const today = moodState?.today
   return <section className="me">
     <header className="album-actions">
+      <p className="eyebrow">航海日志</p>
       <h1>我的夜航</h1>
     </header>
     {avatar && onEditAvatar && <button type="button" className="me-avatar" onClick={onEditAvatar}>
       {avatar}
       <span><strong>{character?.name ?? 'TA'}现在的样子</strong><small>捏一捏，给TA换套新搭配</small></span>
     </button>}
+    {home && <div className="me-met" aria-label="相遇概览">
+      <strong>与{character?.name ?? 'TA'}相遇 <em>{home.met.days}</em> 天</strong>
+      <small>羁绊 · {home.bond.title} Lv.{home.bond.level}</small>
+    </div>}
     <div className="me-grid">
       <div className="me-card">
         <h2>今日心情</h2>
@@ -104,10 +122,13 @@ export function MeScreen({ api, onError, character, refreshHome, avatar, onEditA
             <button type="submit" disabled={!mood || busy}>记下今天</button>
           </form>}
         <p className="me-foot">连续打卡 <strong>{moodState?.streak ?? 0}</strong> 天{moodState?.history?.length ? ` · 最近 ${moodState.history[0].mood}` : ''}</p>
+        <div className="lantern-run" aria-hidden="true">
+          {Array.from({ length: 7 }, (_, index) => <span key={index} className={'lantern' + (index < (moodState?.streak ?? 0) ? '' : ' dim')} />)}
+        </div>
       </div>
       <div className="me-card">
         <h2>与{character?.name ?? 'TA'}的羁绊</h2>
-        <BondBar bond={bond} />
+        <BondBar bond={bond} showLevel />
         <p className="me-hint">聊天、收藏经历、打卡与互动都会让羁绊慢慢生长。</p>
       </div>
     </div>
@@ -127,13 +148,19 @@ function momentTime(iso: string) {
 export function MomentsScreen({ api, onError, character, avatar }: { api: Api; onError: FeatureError; character: Character | null; avatar?: ReactNode }) {
   const [moments, setMoments] = useState<Moment[]>([])
   const [draft, setDraft] = useState('')
+  const [moodTag, setMoodTag] = useState('')
+  const [characterToday, setCharacterToday] = useState(false)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
   const [commenting, setCommenting] = useState<string | null>(null)
   const [commentDraft, setCommentDraft] = useState('')
 
   const load = async () => {
-    try { setMoments((await api<{ moments: Moment[] }>('moments')).moments) }
+    try {
+      const result = await api<{ moments: Moment[]; characterToday: boolean }>('moments')
+      setMoments(result.moments)
+      setCharacterToday(result.characterToday)
+    }
     catch { onError('暂时无法加载朋友圈。') }
   }
   useEffect(() => { void load() }, [])
@@ -144,20 +171,21 @@ export function MomentsScreen({ api, onError, character, avatar }: { api: Api; o
     if (!content || busy) return
     setBusy(true)
     try {
-      await api('moments', { content })
+      await api('moments', { content, moodTag: moodTag || undefined })
       setDraft('')
+      setMoodTag('')
       await load()
       setNotice('已发布。')
     } catch { onError('发布失败，请重试。') } finally { setBusy(false) }
   }
 
   async function refreshByCharacter() {
-    if (busy) return
+    if (busy || characterToday) return
     setBusy(true)
     try {
       const result = await api<{ already?: boolean }>('moments/refresh', {})
       if (!result.already) { await load(); setNotice(`${character?.name ?? 'TA'}发了一条新动态。`) }
-      else setNotice('TA今天已经发过一条了，明天再来。')
+      else { setCharacterToday(true); setNotice('TA今天已经发过一条了，明天再来。') }
     } catch { onError('TA暂时发不出来，稍后再试。') } finally { setBusy(false) }
   }
 
@@ -185,9 +213,16 @@ export function MomentsScreen({ api, onError, character, avatar }: { api: Api; o
       <form onSubmit={post}>
         <textarea aria-label="发一条动态" placeholder="此刻想留下一句…" maxLength={500} rows={2} value={draft}
           onChange={event => setDraft(event.target.value)} />
+        <div className="moment-tags" aria-label="心情标签">
+          {['开心', '平静', '想念', '感触', '夜航', '随想'].map(tag =>
+            <button type="button" key={tag} className={'tag-chip' + (moodTag === tag ? ' active' : '')}
+              onClick={() => setMoodTag(moodTag === tag ? '' : tag)} aria-pressed={moodTag === tag}>{tag}</button>)}
+        </div>
         <button type="submit" disabled={busy || !draft.trim()}>发布</button>
       </form>
-      <button type="button" className="secondary" disabled={busy} onClick={() => void refreshByCharacter()}>让{character?.name ?? 'TA'}也发一条</button>
+      <button type="button" className="secondary" disabled={busy || characterToday} onClick={() => void refreshByCharacter()}>
+        {characterToday ? `${character?.name ?? 'TA'}今天发过了` : `让${character?.name ?? 'TA'}也发一条`}
+      </button>
     </div>
     {notice && <p role="status">{notice}</p>}
     {!moments.length && <p className="muted moments-empty">还没有动态。留下一句，或者让TA先说。</p>}

@@ -55,18 +55,21 @@ export function ServicesScreen({ api, onError, services }: {
     void fetchServices(api).then(setCatalog).catch(() => onError('暂时无法加载生活服务，请重试。'))
   }, [])
 
-  const groups: [string, ServiceItem[]][] = []
+  const groups: [string, string, ServiceItem[]][] = []
   for (const service of catalog) {
     const found = groups.find(([label]) => label === service.categoryLabel)
-    if (found) found[1].push(service)
-    else groups.push([service.categoryLabel, [service]])
+    if (found) found[2].push(service)
+    else groups.push([service.categoryLabel, SCENE_NOTES[service.category] ?? '', [service]])
   }
   return <section className="services-screen">
-    <header className="album-actions"><h1>生活服务</h1></header>
+    <header className="album-actions">
+      <p className="eyebrow">顺手的事</p>
+      <h1>生活服务</h1>
+    </header>
     <p className="services-note">由你的设备决定打开 App 还是网页；晚信不接入平台接口，也不代你操作任何账号。</p>
     {!catalog.length && <p className="muted">正在加载服务目录…</p>}
-    {groups.map(([label, items]) => <section className="service-group" key={label}>
-      <h2>{label}</h2>
+    {groups.map(([label, note, items]) => <section className="service-group" key={label}>
+      <h2>{label}{note && <small> · {note}</small>}</h2>
       <div className="service-grid">
         {items.map(service => <button type="button" key={service.id} className="service-item" onClick={() => openService(service)}>
           <strong>{service.name}</strong>
@@ -75,4 +78,14 @@ export function ServicesScreen({ api, onError, services }: {
       </div>
     </section>)}
   </section>
+}
+
+// 分组场景注释：给「为什么现在用它」一个理由，不做工具列表
+const SCENE_NOTES: Record<string, string> = {
+  eat: '深夜饿了，不用硬扛',
+  buy: '想要的东西，睡前就能到',
+  watch: '一起看的深夜档',
+  read: '睡前翻几页就好',
+  listen: '把耳机分你一只',
+  go: '出门的路，交给地图',
 }

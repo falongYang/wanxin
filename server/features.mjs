@@ -271,7 +271,9 @@ export function createFeatures(db, { authorization, usage, analytics, telemetry,
         const comments = db.prepare('SELECT id, momentId, author, content, createdAt FROM moment_comments ORDER BY rowid').all()
         const map = new Map(rows.map(row => [row.id, { ...row, comments: [] }]))
         for (const comment of comments) map.get(comment.momentId)?.comments.push(comment)
-        return { status: 200, data: { moments: [...map.values()] } }
+        const day = dayKey(clock)
+        const characterToday = !!db.prepare("SELECT 1 FROM moments WHERE threadId = ? AND author = 'character' AND createdAt >= ?").get(threadId, dayStartIso(day))
+        return { status: 200, data: { moments: [...map.values()], characterToday } }
       }
       if (!arg && method === 'POST') {
         const content = typeof body?.content === 'string' ? body.content.trim() : ''
@@ -453,6 +455,8 @@ export function createFeatures(db, { authorization, usage, analytics, telemetry,
       const wishesN = count('SELECT count(*) n FROM wishes WHERE threadId = ?', threadId)
       const gifts = db.prepare('SELECT count FROM gift_log WHERE threadId = ? AND day = ?').get(threadId, day)?.count ?? 0
       const days = anniversaryRows(threadId)
+      const metAt = db.prepare('SELECT createdAt FROM threads WHERE id = ?').get(threadId)?.createdAt
+      const metDays = metAt ? Math.max(1, Math.floor((clock().getTime() - new Date(metAt).getTime()) / 86400000) + 1) : 0
       return {
         status: 200,
         data: {
@@ -461,7 +465,8 @@ export function createFeatures(db, { authorization, usage, analytics, telemetry,
           letters: { unread },
           wishes: { count: wishesN },
           anniversaries: { next: days[0] ?? null },
-          gifts: { today: gifts },
+          gifts: { today: gifts, limit: 2 },
+          met: { days: metDays },
         },
       }
     }

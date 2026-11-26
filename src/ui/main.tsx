@@ -1,5 +1,5 @@
 import { groupCards } from './card-library.js'
-import { MeScreen, MomentsScreen, BondBar, type Bond } from './hub'
+import { MeScreen, MomentsScreen, BondBar, type Bond, type Home } from './hub'
 import { AvatarScreen, Avatar, CHARACTER_DEFAULT_AVATAR, FALLBACK_AVATAR, mergeAvatar, type AvatarConfig } from './avatar'
 import { ServicesScreen, detectServiceHint, fetchServices, openService, type ServiceItem } from './services'
 import { RitualsScreen } from './rituals'
@@ -139,6 +139,17 @@ function ReplyActivity({ message, name = '角色' }: { message: Message; name?: 
   </details>
 }
 
+/* ---------- 玄关宫格线性图标 ---------- */
+function TileIcon({ kind }: { kind: 'cards' | 'rituals' | 'services' | 'avatar' }) {
+  const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
+  return <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+    {kind === 'cards' && <g {...stroke}><path d="M5 4.5h11.5a1.5 1.5 0 0 1 1.5 1.5v13a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5V6A1.5 1.5 0 0 1 5 4.5Z" /><path d="M7 9h8M7 12.5h8M7 16h5" /><path d="M16.5 4.5 19 3l.5 15" /></g>}
+    {kind === 'rituals' && <g {...stroke}><path d="M12 3.5c2.2 0 3.8 1.9 3.8 4.2 0 2.5-1.7 4-1.7 4h-4.2c0 0-1.7-1.5-1.7-4C8.2 5.4 9.8 3.5 12 3.5Z" /><path d="M12 13v3.5" /><path d="M10 20.5c.6-.8 1.3-1.2 2-1.2s1.4.4 2 1.2" /></g>}
+    {kind === 'services' && <g {...stroke}><path d="M4 12.5a8 8 0 0 1 16 0" /><path d="M4 12.5a8 8 0 0 0 16 0" /><path d="M12 12.5v-2" /><circle cx="12" cy="13" r="1" /><path d="M7 12.5v.5M17 12.5v.5" /></g>}
+    {kind === 'avatar' && <g {...stroke}><circle cx="12" cy="8" r="3.5" /><path d="M5.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5" /><path d="M15.5 4.5l.8 1.6 1.7.3-1.2 1.2.3 1.7-1.6-.8" /></g>}
+  </svg>
+}
+
 function App() {
   const [screen, setScreen] = useState<'loading' | 'gate' | 'discover' | 'chat' | 'cards' | 'card' | 'me' | 'moments' | 'avatar' | 'services' | 'rituals'>('loading')
   const [messages, setMessages] = useState<Message[]>([])
@@ -183,13 +194,18 @@ function App() {
   const sending = useRef(false)
   const [listening, setListening] = useState(false)
   const [bond, setBond] = useState<Bond | null>(null)
+  const [home, setHome] = useState<Home | null>(null)
   const [avatarOverride, setAvatarOverride] = useState<Partial<AvatarConfig> | null>(null)
   const [services, setServices] = useState<ServiceItem[]>([])
+  const [avatarReturn, setAvatarReturn] = useState<'me' | 'discover'>('me')
   const avatarConfig = mergeAvatar((character && CHARACTER_DEFAULT_AVATAR[character.id]) || FALLBACK_AVATAR, avatarOverride)
   const serviceHint = screen === 'chat' && !busy ? detectServiceHint(draft, services) : null
+  const reloadHome = () => {
+    void api<Home>('home').then(result => { setHome(result); setBond(result.bond) }).catch(() => {})
+  }
   useEffect(() => {
     if (screen !== 'discover' && screen !== 'me' && screen !== 'moments') return
-    void api<Bond>('bond').then(setBond).catch(() => {})
+    reloadHome()
   }, [screen])
 
   async function load() {
@@ -548,33 +564,36 @@ function App() {
       <header className="chat-header">
         <button type="button" disabled={busy} onClick={() => { setError(''); setScreen('discover') }}>返回</button>
         <div className="chat-who"><Avatar config={avatarConfig} size={38} /><span><strong>{character?.name ?? '角色'}</strong><small>AI 虚构角色</small></span></div>
-        <button type="button" disabled={busy} onClick={() => { setReturnFromCards('chat'); void cardAction(showCards) }}>共同经历</button>
+        <button type="button" disabled={busy} onClick={() => { setReturnFromCards('chat'); void cardAction(showCards) }} className="icon-btn" aria-label="共同经历" title="共同经历"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3.5" y="6.5" width="17" height="12" rx="2.5" /><path d="m4.5 8.5 7.5 5.5 7.5-5.5" /></svg></button>
         <details className="chat-menu"><summary>菜单</summary>
           <button type="button" disabled={busy} onClick={() => void clearSession()}>清除会话</button>
         </details>
       </header>
       <section className="history" aria-label="聊天记录"><p className="history-intro">{character?.scene ?? '深夜 · 想说的话，这里都听得到'}</p>
         <ConversationDrawer messages={messages} busy={busy} togglePin={message => void togglePin(message)} />
-        {messages.map(message => <div id={'message-' + message.id} tabIndex={-1} className={'bubble ' + message.role + (highlighted === message.id ? ' source-highlight' : '')} key={message.id}>
-          {message.content}
-          {message.contextCount != null && <ReplyActivity message={message} name={character?.name} />}
-          {message.role === 'user' && message.status === 'complete' && <div className="message-tools">
-            <button type="button" className="message-trigger" aria-label="消息操作" aria-haspopup="menu"
-              aria-expanded={messageMenu === message.id} aria-controls={messageMenu === message.id ? 'message-menu' : undefined}
-              disabled={busy} onClick={event => {
-                menuMessage.current = message.id
-                menuTrigger.current = event.currentTarget
-                setMessageMenu(messageMenu === message.id ? null : message.id)
-              }}>···</button>
-            {messageMenu === message.id && <div className="message-popover" id="message-menu" role="menu" aria-label="消息操作" ref={menuPanel}>
-              <button type="button" role="menuitem" onClick={() => {
-                closeMessageMenu()
-                void cardAction(() => previewCard(message))
-              }}>做成经历卡</button>
+        {messages.map(message => <div className={'bubble-wrap ' + message.role} key={message.id}>
+          {message.role === 'assistant' && <span className="bubble-avatar" aria-hidden="true"><Avatar config={avatarConfig} size={30} glow /></span>}
+          <div id={'message-' + message.id} tabIndex={-1} className={'bubble ' + message.role + (highlighted === message.id ? ' source-highlight' : '')}>
+            {message.content}
+            {message.contextCount != null && <ReplyActivity message={message} name={character?.name} />}
+            {message.role === 'user' && message.status === 'complete' && <div className="message-tools">
+              <button type="button" className="message-trigger" aria-label="消息操作" aria-haspopup="menu"
+                aria-expanded={messageMenu === message.id} aria-controls={messageMenu === message.id ? 'message-menu' : undefined}
+                disabled={busy} onClick={event => {
+                  menuMessage.current = message.id
+                  menuTrigger.current = event.currentTarget
+                  setMessageMenu(messageMenu === message.id ? null : message.id)
+                }}>···</button>
+              {messageMenu === message.id && <div className="message-popover" id="message-menu" role="menu" aria-label="消息操作" ref={menuPanel}>
+                <button type="button" role="menuitem" onClick={() => {
+                  closeMessageMenu()
+                  void cardAction(() => previewCard(message))
+                }}>做成经历卡</button>
+              </div>}
             </div>}
-          </div>}
-          {message.role === 'user' && message.status !== 'complete' && message.requestId && !busy &&
-            <button type="button" onClick={() => void send(failed?.requestId === message.requestId ? failed : { requestId: message.requestId!, text: message.content, sourceCardId: message.sourceCardId })}>重试</button>}
+            {message.role === 'user' && message.status !== 'complete' && message.requestId && !busy &&
+              <button type="button" onClick={() => void send(failed?.requestId === message.requestId ? failed : { requestId: message.requestId!, text: message.content, sourceCardId: message.sourceCardId })}>重试</button>}
+          </div>
         </div>)}
         {(busy || failed || messages.at(-1)?.role === 'assistant') &&
           <p role="status" className="chat-status">{busy ? '正在处理' : failed ? '回复失败' : '回复已收到'}</p>}
@@ -631,7 +650,7 @@ function App() {
           <button disabled={busy || !draft.trim() || !!failed} type="button" onClick={enqueue}>{editing ? '保存' : '待发'}</button>
           {editing
             ? <button type="button" onClick={() => { setEditing(null); setDraft('') }}>取消</button>
-            : <button disabled={busy || !draft.trim() || !!failed} type="submit">发送</button>}
+            : <button disabled={busy || !draft.trim() || !!failed} type="submit" className="send-btn" aria-label="发送"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 3.5 10.5 14" /><path d="M21 3.5 14 21.5l-3.5-7.5L3 10.5 21 3.5Z" /></svg></button>}
         </form>
       </div>
     </> : screen === 'cards' || screen === 'card' ? <section className="album">
@@ -735,42 +754,52 @@ function App() {
       </section>}
       {screen === 'discover' && <section className="intro">
         <div className="foyer-heading">
-          <p>{new Date().getHours() < 6 ? '夜深了' : new Date().getHours() < 12 ? '早上好' : new Date().getHours() < 18 ? '下午好' : '晚上好'}</p>
-          <button onClick={() => setTheme(theme === 'night' ? 'morning' : 'night')}>{theme === 'night' ? '晨间主题' : '夜海主题'}</button>
+          <p>{new Date().getHours() < 6 ? '夜深了' : new Date().getHours() < 12 ? '早上好' : new Date().getHours() < 18 ? '下午好' : '晚上好'} · 今晚节目单</p>
+          <button onClick={() => setTheme(theme === 'night' ? 'morning' : 'night')} className="icon-btn theme-toggle" aria-label={theme === 'night' ? '切换到晨间主题' : '切换到夜航主题'} title={theme === 'night' ? '晨间主题' : '夜海主题'}>{theme === 'night'
+            ? <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2" /><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.2 5.2l1.7 1.7M17.1 17.1l1.7 1.7M18.8 5.2l-1.7 1.7M6.9 17.1l-1.7 1.7" /></svg>
+            : <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" /></svg>}</button>
         </div>
         {weatherAvailable && <Weather city={city} selectCity={setCity} />}
         <div className="foyer" ref={foyer}>
           <article>
-            <div className="radio-scene" aria-hidden="true"><span>{character?.scene ?? '深夜 · 晚信'}</span><div className="foyer-avatar"><Avatar config={avatarConfig} size={64} glow /></div></div>
-            <p className="scene">{character?.scene?.split('·')[0].trim() ?? '深夜'}</p><h1>{character?.name ?? '角色'}</h1>
-            <small>AI 虚构角色</small><p>{character?.intro ?? ''}</p>
-            <blockquote>{character?.opening ?? ''}</blockquote>
-            <BondBar bond={bond} compact />
-            <button disabled={busy} onClick={() => void openChat()}>和{character?.name ?? '角色'}聊天</button>
-          </article>
-          <article>
-            <h2>共同经历</h2><p>回看你和{character?.name ?? '角色'}留下的故事。</p>
-            <button disabled={busy} onClick={() => { setReturnFromCards('discover'); void cardAction(showCards) }}>打开共同经历</button>
-          </article>
-          <article>
-            <h2>生活服务</h2><p>外卖、购物、看剧、听歌——从晚信顺手打开。</p>
-            <button disabled={busy} onClick={() => { setError(''); setScreen('services') }}>打开服务面板</button>
-          </article>
-          <article>
-            <h2>小小仪式</h2><p>收一封信、放一盏河灯、记一个日子。</p>
-            <button disabled={busy} onClick={() => { setError(''); setScreen('rituals') }}>打开小小仪式</button>
+            <div className="radio-text">
+              <p className="scene">{character?.scene?.split('·')[0].trim() ?? '深夜'}</p>
+              <h1>{character?.name ?? '角色'}</h1>
+              <small>AI 虚构角色</small>
+              <blockquote>{character?.opening ?? ''}</blockquote>
+              <BondBar bond={bond} compact />
+              <button disabled={busy} onClick={() => void openChat()}>和{character?.name ?? '角色'}聊天</button>
+            </div>
+            <div className="radio-scene" aria-hidden="true"><div className="foyer-avatar"><Avatar config={avatarConfig} size={88} glow /></div></div>
           </article>
         </div>
-        <nav className="foyer-heading" aria-label="切换玄关卡片">
-          {['深夜电台', '共同经历', '生活服务', '小小仪式'].map((label, index) => <button key={label} onClick={() => {
-            const panel = foyer.current
-            if (panel) panel.scrollLeft = panel.clientWidth * index
-          }}>{label}</button>)}
-        </nav>
+        <div className="foyer-grid" aria-label="功能入口">
+          <button type="button" className="foyer-tile" disabled={busy} onClick={() => { setReturnFromCards('discover'); void cardAction(showCards) }}>
+            <TileIcon kind="cards" />
+            <strong>共同经历</strong>
+            <small>那些深夜，我们一起走过</small>
+          </button>
+          <button type="button" className="foyer-tile" disabled={busy} onClick={() => { setError(''); setScreen('rituals') }}>
+            {(home?.letters.unread ?? 0) > 0 && <span className="tile-badge" aria-label={`${home?.letters.unread} 封未读信`}>{home && home.letters.unread > 9 ? '9+' : home?.letters.unread}</span>}
+            <TileIcon kind="rituals" />
+            <strong>小小仪式</strong>
+            <small>收一封信，放一盏河灯</small>
+          </button>
+          <button type="button" className="foyer-tile" disabled={busy} onClick={() => { setError(''); setScreen('services') }}>
+            <TileIcon kind="services" />
+            <strong>生活服务</strong>
+            <small>顺手打开外卖、剧集与歌单</small>
+          </button>
+          <button type="button" className="foyer-tile" disabled={busy} onClick={() => { setAvatarReturn('discover'); setError(''); setScreen('avatar') }}>
+            <TileIcon kind="avatar" />
+            <strong>捏捏形象</strong>
+            <small>给TA换一套今晚的样子</small>
+          </button>
+        </div>
       </section>}
-      {screen === 'me' && <MeScreen api={api} onError={message => setError(message)} character={character} refreshHome={() => {}} avatar={<Avatar config={avatarConfig} size={72} glow />} onEditAvatar={() => { setError(''); setScreen('avatar') }} />}
+      {screen === 'me' && <MeScreen api={api} onError={message => setError(message)} character={character} refreshHome={reloadHome} home={home} avatar={<Avatar config={avatarConfig} size={72} glow />} onEditAvatar={() => { setAvatarReturn('me'); setError(''); setScreen('avatar') }} />}
       {screen === 'moments' && <MomentsScreen api={api} onError={message => setError(message)} character={character} avatar={<Avatar config={avatarConfig} size={34} />} />}
-      {screen === 'avatar' && <AvatarScreen api={api} onError={message => setError(message)} characterId={character?.id} characterName={character?.name ?? 'TA'} onSaved={config => setAvatarOverride(config)} onClose={() => { setError(''); setScreen('me') }} />}
+      {screen === 'avatar' && <AvatarScreen api={api} onError={message => setError(message)} characterId={character?.id} characterName={character?.name ?? 'TA'} onSaved={config => setAvatarOverride(config)} onClose={() => { setError(''); setScreen(avatarReturn) }} />}
       {screen === 'services' && <ServicesScreen api={api} onError={message => setError(message)} services={services} />}
       {screen === 'rituals' && <RitualsScreen api={api} onError={message => setError(message)} character={character} />}
       {(screen === 'discover' || screen === 'me' || screen === 'moments' || screen === 'avatar' || screen === 'services' || screen === 'rituals') && <nav className="tabbar" aria-label="主导航">

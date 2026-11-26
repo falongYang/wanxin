@@ -13,7 +13,7 @@ type Wish = { id: string; content: string; blessing: string | null; createdAt: s
 type Anniversary = { id: string; title: string; date: string; repeatYearly: 0 | 1; daysLeft: number }
 type GiftKind = { id: string; name: string }
 
-/* ---------- 每日信箱 ---------- */
+/* ---------- 每日信箱（仪式主卡） ---------- */
 function LetterBox({ api, onError, characterName }: { api: Api; onError: FeatureError; characterName: string }) {
   const [letters, setLetters] = useState<Letter[]>([])
   const [busy, setBusy] = useState(false)
@@ -25,6 +25,8 @@ function LetterBox({ api, onError, characterName }: { api: Api; onError: Feature
     catch { onError('暂时无法打开信箱。') }
   }
   useEffect(() => { void load() }, [])
+
+  const unread = letters.filter(letter => !letter.readAt).length
 
   async function receive() {
     if (busy) return
@@ -47,10 +49,11 @@ function LetterBox({ api, onError, characterName }: { api: Api; onError: Feature
     } catch { /* 已读标记失败不阻断阅读 */ }
   }
 
-  return <div className="me-card ritual-card">
+  return <div className="me-card ritual-hero">
+    {unread > 0 && <span className="tile-badge hero-badge" aria-label={`${unread} 封未读信`}>{unread > 9 ? '9+' : unread}</span>}
     <h2>每日信箱</h2>
-    <p className="me-hint">每天可以收一封{characterName}写的信。</p>
-    <button type="button" disabled={busy} onClick={() => void receive()}>收今天的信</button>
+    <p className="me-hint">{unread > 0 ? `有 ${unread} 封${characterName}写给你的信，还没拆开。` : `${characterName}每天会给你写一封信，安静抵达。`}</p>
+    <button type="button" className="hero-cta" disabled={busy} onClick={() => void receive()}>{unread > 0 ? '拆开这封信' : '收今天的信'}</button>
     {notice && <p role="status">{notice}</p>}
     {letters.length > 0 && <ol className="letter-list">
       {letters.map(letter => <li key={letter.id} className={'letter' + (letter.readAt ? '' : ' unread')}>
@@ -93,7 +96,7 @@ function WishRiver({ api, onError }: { api: Api; onError: FeatureError }) {
 
   return <div className="me-card ritual-card">
     <h2>河灯许愿</h2>
-    <p className="me-hint">把心事写在灯上，放进今晚的海里。</p>
+    <p className="me-hint">把心事放进今晚的海里。</p>
     <form onSubmit={release} className="wish-form">
       <input aria-label="愿望" maxLength={120} placeholder="今晚想许一个什么愿？" value={draft}
         onChange={event => setDraft(event.target.value)} />
@@ -161,7 +164,7 @@ function Anniversaries({ api, onError }: { api: Api; onError: FeatureError }) {
 }
 
 /* ---------- 小礼物 ---------- */
-function GiftStand({ api, onError, characterName }: { api: Api; onError: FeatureError; characterName: string }) {
+function GiftStand({ api, onError }: { api: Api; onError: FeatureError }) {
   const [kinds, setKinds] = useState<GiftKind[]>([])
   const [today, setToday] = useState(0)
   const [limit, setLimit] = useState(2)
@@ -189,7 +192,7 @@ function GiftStand({ api, onError, characterName }: { api: Api; onError: Feature
 
   return <div className="me-card ritual-card">
     <h2>小礼物</h2>
-    <p className="me-hint">每天可以送{characterName}两份小礼物，让TA知道你来了。</p>
+    <p className="me-hint">今天还能送 {Math.max(0, limit - today)} 份。</p>
     <div className="gift-kinds">
       {kinds.map(kind => <button type="button" key={kind.id} disabled={busy || today >= limit} onClick={() => void send(kind)}>{kind.name}</button>)}
     </div>
@@ -202,13 +205,16 @@ function GiftStand({ api, onError, characterName }: { api: Api; onError: Feature
 export function RitualsScreen({ api, onError, character }: { api: Api; onError: FeatureError; character: Character | null }) {
   const name = character?.name ?? 'TA'
   return <section className="rituals-screen">
-    <header className="album-actions"><h1>小小仪式</h1></header>
-    <p className="services-note">信箱、河灯、纪念日与小礼物——都是你与{name}之间的记号。</p>
-    <div className="me-grid">
-      <LetterBox api={api} onError={onError} characterName={name} />
+    <header className="album-actions">
+      <p className="eyebrow">灯塔小屋</p>
+      <h1>小小仪式</h1>
+    </header>
+    <p className="services-note">在细碎的日子里，收集温柔的光。</p>
+    <LetterBox api={api} onError={onError} characterName={name} />
+    <div className="ritual-duo">
       <WishRiver api={api} onError={onError} />
-      <GiftStand api={api} onError={onError} characterName={name} />
-      <Anniversaries api={api} onError={onError} />
+      <GiftStand api={api} onError={onError} />
     </div>
+    <Anniversaries api={api} onError={onError} />
   </section>
 }

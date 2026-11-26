@@ -168,6 +168,22 @@ export function AvatarScreen({ api, onError, characterId, characterName, onSaved
     setConfig(previous => ({ ...previous, [key]: value }) as AvatarConfig)
   }
 
+  function randomize() {
+    const draw = <T,>(list: readonly T[]) => list[Math.floor(Math.random() * list.length)]
+    setConfig({
+      skin: Math.floor(Math.random() * AVATAR_OPTIONS.skin.length),
+      hair: draw(AVATAR_OPTIONS.hair),
+      hairColor: Math.floor(Math.random() * AVATAR_OPTIONS.hairColor.length),
+      eyes: draw(AVATAR_OPTIONS.eyes),
+      mouth: draw(AVATAR_OPTIONS.mouth),
+      blush: draw(AVATAR_OPTIONS.blush),
+      outfit: draw(AVATAR_OPTIONS.outfit),
+      outfitColor: Math.floor(Math.random() * AVATAR_OPTIONS.outfitColor.length),
+      accessory: draw(AVATAR_OPTIONS.accessory),
+    })
+    setNotice('换了一套，不满意再摇一次。')
+  }
+
   return <section className="avatar-screen">
     <header className="album-actions">
       {onClose && <button type="button" className="secondary" onClick={onClose}>返回</button>}
@@ -186,7 +202,11 @@ export function AvatarScreen({ api, onError, characterId, characterName, onSaved
             onClick={() => pick(tab, typeof config[tab] === 'number' ? index : option)}>{option}</button>
         })}
       </div>
-      <button type="submit" disabled={busy} onClick={() => void save()}>保存形象</button>
+      <div className="avatar-actions">
+        <button type="button" className="secondary" onClick={() => { setConfig(base); setNotice('') }}>恢复默认</button>
+        <button type="button" className="secondary" onClick={randomize}>随机一套</button>
+        <button type="submit" disabled={busy} onClick={() => void save()}>保存形象</button>
+      </div>
       {notice && <p role="status">{notice}</p>}
     </div>
   </section>
