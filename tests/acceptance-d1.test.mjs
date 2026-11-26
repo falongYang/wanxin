@@ -1,3 +1,4 @@
+import { developmentPolicy } from '../server/access.mjs'
 // 晚信 D1 可执行验收脚本（测试侧，由 docs/acceptance-d1.md 8 条用例转写）
 // 运行：~/.nvm/versions/node/v22.23.5/bin/node --test tests/acceptance-d1.test.mjs
 // 口径：服务端用测试替身跑通链路；「真实回复（TC-D1-03）」待服务端模型 key 到位后单独复验，
@@ -6,7 +7,9 @@
 import { Readable } from 'node:stream'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createApp } from '../server/app.mjs'
+import { createApp as createPolicyApp } from '../server/app.mjs'
+
+const createApp = (file, reply, options = {}) => createPolicyApp(file, reply, { access: developmentPolicy(), ...options })
 
 function makeClient(app) {
   return function request(path, body, cookie) {

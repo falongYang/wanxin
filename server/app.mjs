@@ -1,14 +1,13 @@
+import { createTelemetry, routeCategory } from './telemetry.mjs'
+import { createUsage } from './usage.mjs'
+import { acquireInstanceLock } from './instance-lock.mjs'
+import { createAccess, ControlError } from './access.mjs'
 import { createAnalytics } from './analytics.mjs'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { DatabaseSync } from 'node:sqlite'
 
 const opening = '今晚的节目还没开始。你想先点一首歌，还是说说今天？'
-
-function json(response, status, data) {
-  response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
-  response.end(JSON.stringify(data))
-}
 
 async function readBody(request) {
   let body = ''
@@ -19,8 +18,13 @@ async function readBody(request) {
   try { return JSON.parse(body) } catch { return null }
 }
 
-export function createApp(filename, reply, { secure = false, timeoutMs = 15000, weather, clock = () => new Date() } = {}) {
-  const db = new DatabaseSync(filename)
+export function createApp(filename, reply, { secure = false, timeoutMs = 15000, weather, access, logger, clock = () => new Date() } = {}) {
+  if (!access) throw new Error('Explicit access policy required')
+  if (access.mode === 'invitation' && filename === ':memory:') throw new Error('Controlled mode requires persistent storage')
+  const release = filename !== ':memory:' ? acquireInstanceLock(filename) : () => {}
+  let db
+  try {
+  db = new DatabaseSync(filename)
   db.exec(`
     PRAGMA foreign_keys = ON;
     CREATE TABLE IF NOT EXISTS visitors (id TEXT PRIMARY KEY, adultConfirmedAt TEXT NOT NULL, createdAt TEXT NOT NULL);
@@ -44,12 +48,29 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
       cardId TEXT NOT NULL, PRIMARY KEY(messageId, cardId)
     );
   `)
+  let authorization, usage
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS control_schema (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL);
+      INSERT OR IGNORE INTO control_schema VALUES (1,1);`)
+    if (db.prepare('SELECT version FROM control_schema WHERE id=1').get().version !== 1) throw new Error('Unsupported control schema')
+    authorization = createAccess(db, access, clock)
+    usage = createUsage(db, access, clock)
+    db.exec('COMMIT')
+  } catch (error) { db.exec('ROLLBACK'); throw error }
   const analytics = createAnalytics(db, clock)
   const insert = db.prepare('INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
   const history = db.prepare('SELECT id, role, content, requestId, status, sourceCardId FROM messages WHERE threadId = ? ORDER BY rowid')
   const prior = db.prepare('SELECT id, content, sourceCardId FROM messages WHERE threadId = ? AND role = ? AND requestId = ?')
   const findThread = db.prepare('SELECT id FROM threads WHERE visitorId = ?')
   const pending = new Map()
+  const telemetry = createTelemetry(logger)
+  telemetry.emit({ event: 'startup' })
+  const json = (response, status, data) => {
+    telemetry.emit({ event: 'request', route: response.controlRoute, status, code: data.code, durationMs: Date.now() - response.controlStarted })
+    response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
+    response.end(JSON.stringify(data))
+  }
   const status = db.prepare('UPDATE messages SET status = ? WHERE id = ?')
 
   const findCard = db.prepare(`
@@ -66,7 +87,7 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
       ? [title, text] : null
   }
 
-  async function generate(threadId, user, requestId, card) {
+  async function generate(threadId, user, requestId, card, attempt, job) {
     const context = db.prepare(`
       SELECT id, role, content FROM (
         SELECT rowid, id, role, content FROM messages
@@ -89,15 +110,35 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
     }
     modelMessages.push({ role: 'user', content: user.content })
     const controller = new AbortController()
+    const started = Date.now()
+    let timedOut = false
     let timer
     try {
+      const model = Promise.resolve().then(() => reply(modelMessages, controller.signal)).then(content => {
+        if (typeof content !== 'string' || !content.trim()) throw new Error('Empty model reply')
+        return content
+      })
+      job.started = true
+      job.settled = model.then(() => {
+        usage.settle(attempt, 'success')
+        if (!timedOut) telemetry.emit({ event: 'model_success', durationMs: Date.now() - started })
+      }, () => {
+        usage.settle(attempt, 'error')
+        if (!timedOut) telemetry.emit({ event: 'model_error', durationMs: Date.now() - started })
+      }).catch(() => telemetry.emit({ event: 'control_error' })).finally(() => pending.delete(threadId))
+      // The HTTP timeout never frees a slot before the underlying operation settles.
       const content = await Promise.race([
-        Promise.resolve().then(() => reply(modelMessages, controller.signal)),
+        model,
         new Promise((_, reject) => {
-          timer = setTimeout(() => { controller.abort(); reject(new Error('Timed out')) }, timeoutMs)
+          timer = setTimeout(() => {
+            timedOut = true
+            try { usage.timeout(attempt) } catch { telemetry.emit({ event: 'control_error' }) }
+            telemetry.emit({ event: 'model_timeout', durationMs: Date.now() - started })
+            controller.abort()
+            reject(new Error('Timed out'))
+          }, timeoutMs)
         }),
       ])
-      if (typeof content !== 'string' || !content.trim()) throw new Error('Empty model reply')
       db.exec('BEGIN')
       try {
         const assistantId = randomUUID()
@@ -121,19 +162,39 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
   async function handle(request, response) {
     analytics.prune()
     const url = new URL(request.url, 'http://localhost')
+    response.controlRoute = routeCategory(url.pathname)
+    response.controlStarted = Date.now()
+    telemetry.ensure()
     const key = request.headers.cookie?.match(/(?:^|;\s*)wanxin=([a-f0-9-]{36})(?:;|$)/)?.[1]
     let threadId = key && findThread.get(key)?.id
     const route = request.method + ' ' + url.pathname
-    if (route === 'GET /api/session') return json(response, 200, { threadId: threadId || null, character: '林舟', ...(weather && { weatherAvailable: true }) })
+    if (route === 'GET /api/session') {
+      if (threadId) { try { authorization.authorize(key) } catch (error) {
+        if (error.status !== 403) throw error
+        threadId = null
+      } }
+      return json(response, 200, { accessRequired: authorization.controlled, threadId: threadId || null, character: '林舟', ...(weather && { weatherAvailable: true }) })
+    }
+    if (request.method !== 'GET') authorization.checkWrite(request)
     if (route === 'POST /api/session') {
-      if ((await readBody(request))?.adult !== true) return json(response, 400, { error: '请先确认成年' })
+      usage.redeemRate(authorization.source(request))
+      const admission = await readBody(request)
+      if (admission?.adult !== true) return json(response, 400, { error: '请先确认成年' })
+      if (threadId) {
+        try { authorization.authorize(key) } catch (error) {
+          if (!(error instanceof ControlError) || error.code !== 'invitation_required' || !admission.inviteToken) throw error
+          // A new invitation creates a separate identity; never adopt old unbound data.
+          threadId = null
+        }
+      }
       if (!threadId) {
         const visitor = randomUUID()
         threadId = randomUUID()
         const now = new Date().toISOString()
-        db.exec('BEGIN')
+        db.exec('BEGIN IMMEDIATE')
         try {
           db.prepare('INSERT INTO visitors VALUES (?, ?, ?)').run(visitor, now, now)
+          authorization.redeem(visitor, admission.inviteToken)
           db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?)').run(threadId, visitor, 'lin-zhou', now)
           insert.run(randomUUID(), threadId, 'assistant', opening, null, 'complete', null, now)
           db.exec('COMMIT')
@@ -144,6 +205,11 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
         response.setHeader('Set-Cookie', 'wanxin=' + visitor + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000' + (secure ? '; Secure' : ''))
       }
       return json(response, 200, { threadId, ...(weather && { weatherAvailable: true }) })
+    }
+    if (!threadId && authorization.controlled) throw new ControlError(403, 'invitation_required')
+    if (threadId && route !== 'DELETE /api/session') {
+      const subject = authorization.authorize(key)
+      usage.endpointRate(subject)
     }
     if (route === 'GET /api/weather/cities' || route === 'GET /api/weather/current') {
       if (!threadId || !weather) return json(response, 404, {})
@@ -242,26 +308,44 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
     let job = pending.get(threadId)
     if (job && job.requestId !== requestId) return json(response, 409, { error: '林舟正在回复' })
     if (!job) {
-      if (!user) {
-        const firstSend = !db.prepare("SELECT 1 FROM messages WHERE threadId = ? AND role = 'user' LIMIT 1").get(threadId)
-        user = { id: randomUUID(), content }
-        insert.run(user.id, threadId, 'user', content, requestId, 'pending', sourceCardId ?? null, new Date().toISOString())
-        if (firstSend) analytics.record(key, 'first_send')
-        analytics.record(key, 'send')
-        if (card) analytics.record(key, 'card_send')
-      } else {
-        status.run('pending', user.id)
-      }
-      job = { requestId, result: generate(threadId, user, requestId, card).finally(() => pending.delete(threadId)) }
+      let attempt
+      telemetry.ensure()
+      usage.transaction(() => {
+        const subject = authorization.authorize(key)
+        attempt = usage.reserve(subject, authorization.controlled ? authorization.digest(requestId) : requestId)
+        if (!user) {
+          const firstSend = !db.prepare("SELECT 1 FROM messages WHERE threadId = ? AND role = 'user' LIMIT 1").get(threadId)
+          user = { id: randomUUID(), content }
+          insert.run(user.id, threadId, 'user', content, requestId, 'pending', sourceCardId ?? null, new Date().toISOString())
+          if (firstSend) analytics.record(key, 'first_send')
+          analytics.record(key, 'send')
+          if (card) analytics.record(key, 'card_send')
+        } else status.run('pending', user.id)
+      })
+      job = { requestId, started: false, settled: Promise.resolve() }
       pending.set(threadId, job)
+      job.result = generate(threadId, user, requestId, card, attempt, job).finally(() => {
+        if (!job.started) { usage.settle(attempt, 'error'); pending.delete(threadId) }
+      })
     }
     const complete = await job.result
     return json(response, complete ? 200 : 503, { messages: history.all(threadId) })
   }
 
   const server = createServer((request, response) => {
-    handle(request, response).catch(() => json(response, 500, { error: '请求暂时无法完成' }))
+    handle(request, response).catch(error => {
+      if (error instanceof ControlError) {
+        if (error.retryAfter) response.setHeader('Retry-After', String(error.retryAfter))
+        return json(response, error.status, { error: error.status === 403 ? '需要有效邀请才能继续。' : error.status === 429 ? '请求已达当前额度或频率上限，请稍后手动重试。' : '服务暂不可用，请稍后手动重试。', code: error.code })
+      }
+      json(response, 500, { error: '请求暂时无法完成' })
+    })
   })
-  server.on('close', () => db.close())
+  server.on('close', () => {
+    const close = () => { db.close(); release() }
+    if (pending.size) Promise.allSettled([...pending.values()].map(job => job.settled)).then(close)
+    else close()
+  })
   return server
+  } catch (error) { db?.close(); release(); throw error }
 }

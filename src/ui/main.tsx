@@ -1,3 +1,4 @@
+import { groupCards } from './card-library.js'
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -17,7 +18,7 @@ type Card = { id: string; sourceMessageId: string; title: string; body: string; 
 type CardDraft = Pick<Card, 'sourceMessageId' | 'title' | 'body' | 'createdAt'> & { id?: string; sourceContent: string }
 
 class ApiError extends Error {
-  constructor(readonly status: number, message: string) { super(message) }
+  constructor(readonly status: number, message: string, readonly code = '', readonly retryAfter = '') { super(message) }
 }
 
 function newRequestId() {
@@ -38,7 +39,7 @@ async function api<T>(path: string, data?: unknown, method = data === undefined 
   })
   if (!response.ok) {
     const result = await response.json()
-    throw new ApiError(response.status, result.error || '请求暂时无法完成')
+    throw new ApiError(response.status, result.error || '请求暂时无法完成', result.code, response.headers.get('Retry-After') || '')
   }
   return response.json() as Promise<T>
 }
@@ -98,6 +99,9 @@ function App() {
   const [editing, setEditing] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [city, setCity] = useState<City | null>(null)
+  const [accessRequired, setAccessRequired] = useState(false)
+  const [inviteToken, setInviteToken] = useState('')
+  const [admissionNeeded, setAdmissionNeeded] = useState(false)
   const [weatherAvailable, setWeatherAvailable] = useState(false)
   const [theme, setTheme] = useState(() => new Date().getHours() >= 6 && new Date().getHours() < 12 ? 'morning' : 'night')
   const foyer = useRef<HTMLDivElement>(null)
@@ -106,6 +110,12 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [cards, setCards] = useState<Card[]>([])
+  const [cardQuery, setCardQuery] = useState('')
+  const cardSearch = useRef<HTMLInputElement>(null)
+  const cardReturn = useRef({ top: 0, id: '', index: 0 })
+  const restoreCardList = useRef(false)
+  const cardGroups = groupCards(cards, cardQuery)
+  const visibleCards = cardGroups.flatMap(group => group.cards)
   const [cardDraft, setCardDraft] = useState<CardDraft | null>(null)
   const [reference, setReference] = useState<Card | null>(null)
   const [notice, setNotice] = useState('')
@@ -125,7 +135,8 @@ function App() {
   async function load() {
     setError('')
     try {
-      const session = await api<{ threadId: string | null; weatherAvailable?: boolean }>('session')
+      const session = await api<{ threadId: string | null; weatherAvailable?: boolean; accessRequired?: boolean }>('session')
+      setAccessRequired(!!session.accessRequired)
       setWeatherAvailable(!!session.weatherAvailable)
       setScreen(session.threadId ? 'discover' : 'gate')
     } catch {
@@ -159,6 +170,21 @@ function App() {
     }
   }, [screen, busy])
 
+  useEffect(() => {
+    if (screen !== 'cards' || busy || !restoreCardList.current) return
+    restoreCardList.current = false
+    const saved = cardReturn.current
+    const target = document.getElementById('card-' + saved.id) ||
+      document.getElementById('card-' + (visibleCards[Math.min(saved.index, visibleCards.length - 1)]?.id ?? ''))
+    if (target) {
+      target.focus({ preventScroll: true })
+      window.scrollTo({ top: saved.top, behavior: 'auto' })
+    } else {
+      cardSearch.current?.focus({ preventScroll: true })
+      window.scrollTo({ top: 0, behavior: 'auto' })
+    }
+  }, [screen, busy, cards, cardQuery])
+
   function closeMessageMenu(restoreFocus = false) {
     setMessageMenu(null)
     if (restoreFocus) menuTrigger.current?.focus()
@@ -186,16 +212,25 @@ function App() {
     }
   }, [messageMenu])
 
+  function accessError(error: unknown) {
+    if (error instanceof ApiError && error.code === 'invitation_required') {
+      setAccessRequired(true)
+      setAdmissionNeeded(true)
+    }
+  }
+
   async function confirmAge() {
     setBusy(true)
     setError('')
     try {
-      const session = await api<{ weatherAvailable?: boolean }>('session', { adult: true })
+      const session = await api<{ weatherAvailable?: boolean }>('session', { adult: true, inviteToken: inviteToken || undefined })
       setWeatherAvailable(!!session.weatherAvailable)
+      setAdmissionNeeded(false)
       setScreen('discover')
-    } catch {
-      setError('暂时无法确认，请重试。')
+    } catch (error) {
+      setError(error instanceof ApiError ? error.message : '暂时无法确认，请重试。')
     } finally {
+      setInviteToken('')
       setBusy(false)
     }
   }
@@ -222,8 +257,9 @@ function App() {
       setSourceTarget(sourceMessageId ?? null)
       setScreen('chat')
       return true
-    } catch {
-      setError('暂时无法打开聊天，请重试。')
+    } catch (error) {
+      accessError(error)
+      setError(error instanceof ApiError ? error.message : '暂时无法打开聊天，请重试。')
       return false
     } finally {
       setBusy(false)
@@ -239,7 +275,7 @@ function App() {
     setHighlighted(null)
     setMessages(previous => previous.some(message => message.requestId === submission.requestId) ? previous : [
       ...previous,
-      { id: submission.requestId, role: 'user', content: submission.text, requestId: submission.requestId, status: 'pending' },
+      { id: submission.requestId, role: 'user', content: submission.text, requestId: submission.requestId, sourceCardId: submission.sourceCardId, status: 'pending' },
     ])
     try {
       const { queuedIds, ...payload } = submission
@@ -247,6 +283,7 @@ function App() {
       setQueue(previous => previous.filter(item => !queuedIds?.includes(item.id)))
       setMessages(result.messages)
       setReference(null)
+      setDraft(previous => previous === submission.text ? '' : previous)
     } catch (error) {
       if (submission.sourceCardId && error instanceof ApiError && error.status === 404) {
         setMessages(previous => previous.filter(message => message.id !== submission.requestId))
@@ -258,7 +295,10 @@ function App() {
         ? { ...message, status: 'failed' }
         : message))
       setFailed(submission)
-      setError('回复暂未送达，可以重试这条消息。')
+      if (!submission.queuedIds) setDraft(submission.text)
+      accessError(error)
+      const retry = error instanceof ApiError && error.retryAfter ? `（请至少等待 ${error.retryAfter} 秒）` : ''
+      setError(error instanceof ApiError && error.code ? error.message + retry : '回复暂未送达，可以手动重试这条消息。')
     } finally {
       setBusy(false)
       sending.current = false
@@ -300,13 +340,16 @@ function App() {
     setError('')
     setNotice('')
     try { await action() } catch (error) {
+      accessError(error)
       setError(error instanceof ApiError ? error.message : '操作暂时无法完成，请重试。')
     } finally { setBusy(false) }
   }
 
-  async function showCards() {
+  async function showCards(restore = false) {
     const result = await api<{ cards: Card[] }>('cards')
     setCards(result.cards)
+    if (!restore) cardReturn.current = { top: 0, id: '', index: 0 }
+    restoreCardList.current = true
     setScreen('cards')
   }
 
@@ -324,7 +367,8 @@ function App() {
     try {
       const preview = await api<Pick<Card, 'title' | 'body' | 'createdAt'>>('card-preview', { sourceMessageId: message.id })
       setCardDraft({ ...fallback, ...preview })
-    } catch {
+    } catch (error) {
+      accessError(error)
       setNotice('预览生成失败，可以用原文编辑后收藏。')
     }
   }
@@ -338,6 +382,7 @@ function App() {
         { title, body, sourceMessageId }, id ? 'PATCH' : 'POST')
       setCardDraft({ ...result.card, sourceContent: result.card.sourceContent ?? '' })
       setEditingCard(false)
+      setCards(previous => [result.card, ...previous.filter(card => card.id !== result.card.id)])
       setNotice(id ? '已保存修改' : '已存入共同经历')
     })
   }
@@ -354,7 +399,7 @@ function App() {
   }
 
   async function leaveCard() {
-    if (screen === 'card' && cardDraft?.id) await cardAction(showCards)
+    if (screen === 'card' && cardDraft?.id) await cardAction(() => showCards(true))
     else if (screen === 'cards' && returnFromCards === 'discover') setScreen('discover')
     else {
       restoreMessageFocus.current = screen === 'card'
@@ -369,6 +414,9 @@ function App() {
       await api('session', undefined, 'DELETE')
       setMessages([])
       setCards([])
+      setCardQuery('')
+      cardReturn.current = { top: 0, id: '', index: 0 }
+      restoreCardList.current = false
       setCardDraft(null)
       setReference(null)
       setFailed(null)
@@ -381,6 +429,7 @@ function App() {
     })
   }
 
+  const showAdmission = admissionNeeded && screen !== 'gate'
   return <main data-theme={theme} className={screen === 'chat' ? 'shell chat' : 'shell discovery'}>
     {screen === 'chat' ? <>
       <header className="chat-header">
@@ -437,6 +486,7 @@ function App() {
           {suggestions.map(([label, text]) => <button key={label} type="button" onClick={() => { setDraft(text); input.current?.focus() }}>{label}</button>)}
         </div>}
         {error && <p role="alert">{error}</p>}
+      {showAdmission && <button type="button" onClick={() => setScreen('gate')}>重新确认邀请</button>}
         {notice && <p role="status">{notice}</p>}
         {reference && <div className="reference">
           <span>引用：{reference.title}</span>
@@ -484,17 +534,37 @@ function App() {
         <h1 id="card-heading" tabIndex={-1}>{screen === 'cards' ? '共同经历' : cardDraft?.id ? '经历卡' : '预览经历卡'}</h1>
       </header>
       {screen === 'cards' && <>
+        <div className="card-search">
+          <label htmlFor="card-search">寻找一个片段</label>
+          <div><input id="card-search" ref={cardSearch} type="search" autoComplete="off" disabled={busy}
+            value={cardQuery} placeholder="搜索标题或正文" onChange={event => setCardQuery(event.target.value)} />
+            {cardQuery.length > 0 && <button className="secondary" type="button" disabled={busy} onClick={() => {
+              setCardQuery('')
+              cardSearch.current?.focus()
+            }}>清空搜索</button>}
+          </div>
+        </div>
+        <p className="card-count" role="status">{cardQuery.trim() ? `找到 ${visibleCards.length} 段共同经历` : `共 ${cards.length} 段共同经历`}</p>
         {cards.length === 0 && <p className="muted">这里会收好你与林舟的片段。<br />回到聊天，选择想留下的消息做成经历卡。</p>}
-        {cards.map(card => <button className="card-list-item" key={card.id} disabled={busy}
-          onClick={() => void cardAction(async () => {
-            const result = await api<{ card: Card }>('cards/' + card.id)
-            setCardDraft({ ...result.card, sourceContent: result.card.sourceContent ?? '' })
-            setEditingCard(false)
-            setScreen('card')
-          })}>
-          <strong><span className="lantern" aria-hidden="true" />{card.title}</strong><small>{new Date(card.createdAt).toLocaleDateString('zh-CN')}</small>
-          <span>{card.body}</span>
-        </button>)}
+        {cards.length > 0 && visibleCards.length === 0 && <p className="muted">没有找到这个片段，换个关键词或清空搜索试试。</p>}
+        {cardGroups.map(group => <section className="card-month" aria-label={group.label} key={group.key}>
+          <h2>{group.label}<small>{group.cards.length} 段</small></h2>
+          {group.cards.map(card => <button className="card-list-item" id={'card-' + card.id} key={card.id} disabled={busy}
+            onClick={() => {
+              cardReturn.current = { top: window.scrollY, id: card.id, index: visibleCards.findIndex(item => item.id === card.id) }
+              restoreCardList.current = true // Also restore focus if the detail request fails.
+              void cardAction(async () => {
+                const result = await api<{ card: Card }>('cards/' + card.id)
+                setCardDraft({ ...result.card, sourceContent: result.card.sourceContent ?? '' })
+                setEditingCard(false)
+                setScreen('card')
+                window.scrollTo({ top: 0, behavior: 'auto' })
+              })
+            }}>
+            <strong><span className="lantern" aria-hidden="true" />{card.title}</strong><small>{Number.isFinite(Date.parse(card.createdAt)) ? new Date(card.createdAt).toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '日期未知'}</small>
+            <span>{card.body}</span>
+          </button>)}
+        </section>)}
       </>}
       {screen === 'card' && cardDraft && <form className="card-form" onSubmit={saveCard}>
         <small>{new Date(cardDraft.createdAt).toLocaleDateString('zh-CN')}</small>
@@ -525,8 +595,11 @@ function App() {
               void cardAction(async () => {
                 await api('cards/' + cardDraft.id, undefined, 'DELETE')
                 if (reference?.id === cardDraft.id) setReference(null)
+                setCards(previous => previous.filter(card => card.id !== cardDraft.id))
                 setCardDraft(null)
-                await showCards()
+                restoreCardList.current = true
+                setScreen('cards')
+                await showCards(true)
               })
             }}>删除卡片</button>
           </>}
@@ -534,12 +607,16 @@ function App() {
       </form>}
       {notice && <p role="status">{notice}</p>}
       {error && <p role="alert">{error}</p>}
+      {showAdmission && <button type="button" onClick={() => setScreen('gate')}>重新确认邀请</button>}
     </section> : <>
       <div className="brand">晚信<small>把今晚，慢慢说给我听</small></div>
       {screen === 'loading' && (error ? <button onClick={() => void load()}>重试</button> : <p role="status">正在打开晚信…</p>)}
       {screen === 'gate' && <section className="intro">
         <h1>欢迎来到晚信</h1><p>晚信面向成年人。你将与 AI 虚构角色对话。</p>
-        <button disabled={busy} onClick={() => void confirmAge()}>我已年满 18 岁</button>
+        {accessRequired && <label className="invite-input">邀请码<input type="password" aria-label="邀请码" autoComplete="off" maxLength={256}
+          value={inviteToken} onChange={event => setInviteToken(event.target.value)} /></label>}
+        {accessRequired && <p className="footnote">邀请码仅可兑换一次。清除会话或丢失浏览器身份后，请联系邀请人补发。</p>}
+        <button disabled={busy || (accessRequired && !inviteToken.trim())} onClick={() => void confirmAge()}>我已年满 18 岁</button>
       </section>}
       {screen === 'discover' && <section className="intro">
         <div className="foyer-heading">
@@ -568,6 +645,7 @@ function App() {
         </nav>
       </section>}
       {error && <p role="alert">{error}</p>}
+      {showAdmission && <button type="button" onClick={() => setScreen('gate')}>重新确认邀请</button>}
     </>}
   </main>
 }

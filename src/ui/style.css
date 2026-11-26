@@ -216,3 +216,15 @@ summary { cursor: pointer; }
 .letter-body { margin: 0 0 1rem; line-height: 2; white-space: pre-wrap; overflow-wrap: anywhere; }
 .card-form details { border-top: 1px solid #302a2620; border-bottom: 1px solid #302a2620; font-size: .85rem; }
 .card-form .album-actions { margin-top: .5rem; }
+.invite-input { display: grid; gap: .5rem; margin: 1rem 0; }
+.invite-input input { width: 100%; min-width: 0; }
+.card-search { margin: 1.5rem 0 .5rem; }
+.card-search label { display: block; margin-bottom: .55rem; color: var(--muted); font-size: .85rem; }
+.card-search > div { display: flex; align-items: center; gap: .5rem; }
+.card-search input { flex: 1; width: 100%; min-width: 0; min-height: 44px; }
+.card-search button { flex-shrink: 0; padding: .65rem .7rem; }
+.card-count { color: var(--muted); font-size: .8rem; }
+.card-month { margin: 1.5rem 0 2rem; }
+.card-month h2 { display: flex; gap: .75rem; align-items: center; font: 1.1rem var(--serif); color: var(--gold); }
+.card-month h2 small { font: .75rem system-ui; color: var(--muted); }
+.card-list-item:focus-visible { outline: 2px solid var(--gold); outline-offset: 4px; }

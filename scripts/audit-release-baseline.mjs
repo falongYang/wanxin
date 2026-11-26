@@ -1,3 +1,4 @@
+import { developmentPolicy } from '../server/access.mjs'
 // Local-only synthetic audit. No network, model credentials or production data.
 import assert from 'node:assert/strict'
 import { mkdtempSync, copyFileSync, rmSync } from 'node:fs'
@@ -5,7 +6,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { DatabaseSync } from 'node:sqlite'
-import { createApp } from '../server/app.mjs'
+import { createApp as createPolicyApp } from '../server/app.mjs'
+
+const createApp = (file, reply, options = {}) => createPolicyApp(file, reply, { access: developmentPolicy(), ...options })
 
 const directory = mkdtempSync(join(tmpdir(), 'wanxin-release-audit-'))
 const database = join(directory, 'source.sqlite')
@@ -50,7 +53,7 @@ try {
   db.close()
   app = createApp(join(directory, 'restored.sqlite'), reply, { secure: true })
   assert.deepEqual((await request('thread', null, cookie)).data, before)
-  console.log(JSON.stringify({ secureCookie: 'passed', restart: 'passed', stoppedBackupRestore: 'passed', integrity: 'ok', sequentialRequests: 20, modelCalls: calls, rateBudget: 'not enforced by this app for this sample', scope: 'temporary synthetic database; no network' }))
+  console.log(JSON.stringify({ secureCookie: 'passed', restart: 'passed', stoppedBackupRestore: 'passed', integrity: 'ok', sequentialRequests: 20, modelCalls: calls, rateBudget: 'explicit development stub bypass; not a controlled-mode quota verification', scope: 'temporary synthetic database; no network' }))
 } finally {
   if (app) stop()
   rmSync(directory, { recursive: true, force: true })

@@ -1,10 +1,13 @@
+import { developmentPolicy } from '../server/access.mjs'
 import assert from 'node:assert/strict'
 import { copyFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { test } from 'node:test'
-import { createApp } from '../server/app.mjs'
+import { createApp as createPolicyApp } from '../server/app.mjs'
+
+const createApp = (file, reply, options = {}) => createPolicyApp(file, reply, { access: developmentPolicy(), ...options })
 
 test('停写备份恢复后卡片保留且仍隔离访客', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'wanxin-restore-test-'))

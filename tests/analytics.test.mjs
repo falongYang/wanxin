@@ -1,3 +1,4 @@
+import { developmentPolicy } from '../server/access.mjs'
 import { Readable } from 'node:stream'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
@@ -5,8 +6,10 @@ import { DatabaseSync } from 'node:sqlite'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createApp } from '../server/app.mjs'
+import { createApp as createPolicyApp } from '../server/app.mjs'
 import { createAnalytics, trialMetrics } from '../server/analytics.mjs'
+
+const createApp = (file, reply, options = {}) => createPolicyApp(file, reply, { access: developmentPolicy(), ...options })
 
 function makeClient(app) {
   return function request(path, body, cookie, method = body ? 'POST' : 'GET') {

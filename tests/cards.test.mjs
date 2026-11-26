@@ -1,7 +1,10 @@
+import { developmentPolicy } from '../server/access.mjs'
 import { Readable } from 'node:stream'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createApp } from '../server/app.mjs'
+import { createApp as createPolicyApp } from '../server/app.mjs'
+
+const createApp = (file, reply, options = {}) => createPolicyApp(file, reply, { access: developmentPolicy(), ...options })
 
 function makeClient(app) {
   return function request(path, body, cookie, method = body ? 'POST' : 'GET') {

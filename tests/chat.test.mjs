@@ -1,7 +1,10 @@
+import { developmentPolicy } from '../server/access.mjs'
 import { Readable } from 'node:stream'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createApp } from '../server/app.mjs'
+import { createApp as createPolicyApp } from '../server/app.mjs'
+
+const createApp = (file, reply, options = {}) => createPolicyApp(file, reply, { access: developmentPolicy(), ...options })
 
 test('确认成年、失败后重试、并发去重、刷新和访客隔离', async (t) => {
   let calls = 0
