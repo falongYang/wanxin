@@ -145,9 +145,9 @@ export function LiveStage({ characterId, config, atmosphere = 'night', talking =
     engineRef.current = engine
     force(n => n + 1)
     return () => { engine.dispose(); engineRef.current = null }
-    // pack/config 以 setExpression/setTalking 按需同步，避免整树重挂
+    // characterId 或 造型包变化时整树重挂（换包=换素材集）；表情/说话态经 setExpression/setTalking 增量同步
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [characterId])
+  }, [characterId, config.packId])
   useEffect(() => { engineRef.current?.setExpression(config) }, [config])
   useEffect(() => { engineRef.current?.setTalking(talking) }, [talking])
   useEffect(() => { engineRef.current?.setAtmosphere(atmosphere) }, [atmosphere])

@@ -39,12 +39,24 @@ function buildPack(character: string, id: string, name: string, hint: string): A
 export const CHARACTER_PACKS: Record<CharacterId, AvatarPack[]> = {
   'lin-zhou': [
     buildPack('linzhou', 'pack1', '深夜电台', '云白针织与暖杏开衫，戴上耳机就有节目感'),
+    buildPack('linzhou', 'pack2', '海边漫步', '奶白卫衣，耳机挂在脖子上，海风都慢下来'),
+    buildPack('linzhou', 'pack3', '暖冬炉火', '针织帽与格纹围巾，炉子上的水壶轻轻响'),
+    buildPack('linzhou', 'pack4', '夏夜风铃', '条纹T恤和小耳钉，晚风穿过风铃的凉夏'),
+    buildPack('linzhou', 'pack5', '特别节目', '背头白衬衫，今晚的节目单为你加了星'),
   ],
   'gu-chuan': [
     buildPack('guchuan', 'pack1', '旧书店', '深棕高领与墨绿马甲，书页间的沉静'),
+    buildPack('guchuan', 'pack2', '深夜阅读', '灰开衫抱着没读完的旧书，灯下再坐一会儿'),
+    buildPack('guchuan', 'pack3', '雨天来客', '焦糖风衣与围巾，替你收好滴水的伞'),
+    buildPack('guchuan', 'pack4', '午后咖啡', '挽起袖口的白衬衫，今天店里的咖啡豆很香'),
+    buildPack('guchuan', 'pack5', '店休日', '雾灰卫衣与有线耳机，书店休息的日子去散步'),
   ],
   'su-mian': [
     buildPack('sunwan', 'pack1', '城市天台', '月白卫衣与灰蓝工装，把星星收进相机'),
+    buildPack('sunwan', 'pack2', '深夜便利店', '杏色面包羽绒服，关东煮的热气糊住玻璃'),
+    buildPack('sunwan', 'pack3', '图书馆午睡', '奶咖卫衣与平光镜，在书页间打了个盹'),
+    buildPack('sunwan', 'pack4', '流星雨之夜', '毛绒外套与绒线手套，等一场说好的流星雨'),
+    buildPack('sunwan', 'pack5', '春日骑行', '浅青夹克高马尾，风把春天吹到耳边'),
   ],
 }
 
