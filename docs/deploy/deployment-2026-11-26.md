@@ -131,4 +131,21 @@
 - 回滚：部署前备份至 `/var/www/_rollback_wanxin_20261126-234544/`（frontend），指针 `/var/www/_last_wanxin_backup`。
 - 邀请消耗：本次发版未消耗邀请令牌；**token-007 仍为最后一张未用邀请**。
 
+## 附录 · 阶段 9 主题小铺与交互细节（次日第六次发版，2026-11-27）
+
+以新增 4 张设计稿（`docs/design/stage9/`：樱雨/奶糖/薄荷玄关 + 主题小铺面板）为基准，新增 3 种可爱温柔主题与一批交互细节，纯前端发版（server 未改动），本地提交 12f8608：
+
+- **主题小铺**：玄关头部主题按钮由二态切换升级为弹出式主题菜单（玻璃面板，5 选项各带渐变色块预览、主题名与一句心情小字、勾选指示），标题「主题小铺 · 挑一个今晚的心情」；主题选择写入 localStorage（下次进入保留），body 同步 data-theme 保证大屏两侧底色一致；时间默认规则不变（6-12 点晨间，其余夜航）。
+- **三种新主题**：樱雨（深夜梅紫 #150c17 + 樱粉点缀，樱色星野 + 樱色微光层 petal-drift）、奶糖（奶油白 #f6efe3 + 焦糖 #b07a3f）、薄荷（海盐白 #e7f4f0 + 青碧 #2f8f79，主按钮取浅青渐变保深字对比）；浅色主题隐去星野、月牙调暗、信笺河纸面化、气泡阴影适配。
+- **修复的历史问题**：`.shell` 与 `.discovery` 实为同一元素，`.shell[data-theme] .discovery` 后代选择器从不匹配（阶段 7 的 morning 星野隐藏规则一直是死代码），已全部改为复合选择器；底部标签栏选中态由硬编码金色改为 `color-mix(var(--gold))` 随主题变化；主题面板被玄关主大卡遮挡的层叠上下文 bug（.foyer-heading z-index:1 困住面板 z-40）已修复并经 elementFromPoint + 视觉模型双重验证。
+- **交互细节**：聊天等待回复时显示角色侧「正在写回信…」typing 气泡（三点呼吸动画，完成后恢复「回复已收到」状态行）；朋友圈点赞爱心弹跳动画（heart-pop，计数随点赞数显示）；共同经历/朋友圈空态增加三盏熄着的河灯装饰（reduced-motion 全局规则覆盖全部新动画）。
+
+验证（2026-11-27 09:00 前后）：
+
+- 本地：`npm test` 64/64；`npm run build` 产物 `index-DZXLEw7H.js` / `index-D_OYzxWz.css`；阶段 9 验证截图 `docs/verification/stage9-design/`（主题小铺开面板、三新主题玄关、樱雨门页、typing 指示、点赞动画、空态）。
+- dev 实测：主题面板开合（含 Escape 关闭与外点关闭）、五主题切换与 reload 持久化、樱雨樱花层 computed 动画 petal-drift、浅色主题星野 display:none、typing 气泡（拦截 api 延迟 2.5s 捕获，animationName=typing-breathe）、点赞 active+heart-pop+计数、空态河灯渲染，逐项通过；期间修复验证环境两个干扰：浏览器视口被外部进程重置为 1200 宽（重拍全部截图于 390×844）、stage8-design 已提交截图再次被外部进程以桌面视口覆盖（已 git 还原）。
+- 线上：静态产物 SHA-256 与本地逐字节一致（index.html `1e1633d7…`、JS `6d3fcfb6…`、CSS `24080500…`）；`sudo service wanxin restart` 后页面 200 并引用 `index-DZXLEw7H.js`；线上 JS 含新功能标记（主题小铺/正在写回信）。
+- 回滚：部署前备份至 `/var/www/_rollback_wanxin_20261127-090100/`（frontend），指针 `/var/www/_last_wanxin_backup`。
+- 邀请消耗：本次发版未消耗邀请令牌；**token-007 仍为最后一张未用邀请**。
+
 > AI生成
