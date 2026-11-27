@@ -141,6 +141,60 @@ test('捏捏形象：保存/读取/形状校验/线程隔离/级联删除', asyn
   assert.equal((await request('avatar', null, fresh)).json().config, null)
 })
 
+test('捏捏形象 v2：3D 配置保存/数值截断/缺省回退/非法输入 400/旧配置共存', async t => {
+  const app = createApp(':memory:', async () => '合成回复', { access: developmentPolicy() })
+  t.after(() => app.emit('close'))
+  const request = makeClient(app)
+  const cookie = await session(request)
+  const v2 = {
+    version: 2,
+    face: { faceWidth: -14, jawWidth: -10, jawAngle: -12, chinLength: 10, cheekBone: 6, cheekFat: -6 },
+    eyes: { eyeDistance: 0, eyeHeight: 2, eyeSize: 10, eyeTilt: -6, lidCrease: 12, smileBand: 16, browHeight: 6, browSpace: 4, browCurve: 18, browThick: -6, iris: 'dark-brown' },
+    nose: { bridge: 8, bridgeWidth: -8, tip: -4, ala: -6, noseLength: 6 },
+    lips: { upperLip: 2, lowerLip: 6, mouthWidth: -6, corner: 22, cupidsBow: 4 },
+    skin: { tone: { h: 28, s: 42, l: 86 }, blush: 34, lipTint: { h: 6, s: 42, l: 52 }, freckles: 'none' },
+    hair: { style: 'wavy-mid', bangs: 'airy', color: { h: 222, s: 22, l: 15 }, length: 10, volume: 14, curl: 10, highlight: 0 },
+    body: { shoulderWidth: -8, neckLength: 8, chestDepth: -6 },
+    outfit: { top: 'knit-round', topColor: { h: 42, s: 24, l: 92 }, outer: 'cardigan', outerColor: { h: 30, s: 46, l: 80 } },
+    accessories: ['headphones'],
+  }
+  const saved = await request('avatar', { config: v2 }, cookie, 'PUT')
+  assert.equal(saved.status, 200)
+  const stored = saved.json().config
+  assert.equal(stored.version, 2)
+  assert.equal(stored.face.faceWidth, -14)
+  assert.equal(stored.eyes.iris, 'dark-brown')
+  assert.equal(stored.outfit.outer, 'cardigan')
+  assert.deepEqual(stored.accessories, ['headphones'])
+  assert.deepEqual((await request('avatar', null, cookie)).json().config, stored)
+  // 超范围数值截断到 ±100；非法数值回退 0；非法 ID 回退默认；配饰过滤 + 最多 3 件
+  const loose = await request('avatar', {
+    config: {
+      ...v2,
+      face: { faceWidth: 250, jawWidth: -400, jawAngle: 'x', chinLength: 10, cheekBone: 6, cheekFat: -6 },
+      eyes: { ...v2.eyes, iris: 'NOT-AN-ID' },
+      hair: { ...v2.hair, style: 'new-future-style' },
+      accessories: ['headphones', 'bad id', 'scarf', 'ribbon', 'camera'],
+    },
+  }, cookie, 'PUT')
+  assert.equal(loose.status, 200)
+  const cleaned = loose.json().config
+  assert.equal(cleaned.face.faceWidth, 100)
+  assert.equal(cleaned.face.jawWidth, -100)
+  assert.equal(cleaned.face.jawAngle, 0)
+  assert.equal(cleaned.eyes.iris, 'dark-brown')
+  assert.equal(cleaned.hair.style, 'new-future-style')
+  assert.deepEqual(cleaned.accessories, ['headphones', 'scarf', 'ribbon'])
+  // 分区缺失 / 非对象 → 400
+  assert.equal((await request('avatar', { config: { version: 2, face: 'oops' } }, cookie, 'PUT')).status, 400)
+  assert.equal((await request('avatar', { config: { version: 2 } }, cookie, 'PUT')).status, 400)
+  // v1 与 v2 在不同线程共存互不影响
+  const other = await session(request)
+  await request('avatar', { config: { hair: '马尾' } }, other, 'PUT')
+  assert.equal((await request('avatar', null, other)).json().config.hair, '马尾')
+  assert.equal((await request('avatar', null, cookie)).json().config.version, 2)
+})
+
 test('生活服务：目录下发、点击落账、未知服务 404', async t => {
   const app = createApp(':memory:', async () => '合成回复', { access: developmentPolicy() })
   t.after(() => app.emit('close'))

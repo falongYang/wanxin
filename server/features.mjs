@@ -37,11 +37,64 @@ export const SERVICES = Object.freeze([
 ].map(({ id, name, category, scheme, web }) =>
   Object.freeze({ id, name, category, categoryLabel: SERVICE_CATEGORY_LABEL[category], scheme, web })))
 
-// 捏捏形象：只约定字段名与类型（与客户端 avatar.tsx 对应），不校验具体选项值，
+// 捏捏形象：只约定字段名与类型（与客户端 avatar.tsx / avatar-catalog.ts 对应），不校验具体选项值，
 // 选项目录留在客户端，服务端存储的是「相对角色默认形象的覆盖配置」。
+// v2（3D 捏捏）：数值一律 -100~100 截断，颜色为 HSL 对象，款式为小写短横线 ID；
+// 未知键忽略、缺失键回默认，保证服务端向后兼容（客户端 coerceV2 再做严格整形）。
 const AVATAR_FIELDS = { skin: 'number', hair: 'string', hairColor: 'number', eyes: 'string', mouth: 'string', blush: 'string', outfit: 'string', outfitColor: 'number', accessory: 'string' }
+const AVATAR_V2_NUMBERS = {
+  face: ['faceWidth', 'jawWidth', 'jawAngle', 'chinLength', 'cheekBone', 'cheekFat'],
+  eyes: ['eyeDistance', 'eyeHeight', 'eyeSize', 'eyeTilt', 'lidCrease', 'smileBand', 'browHeight', 'browSpace', 'browCurve', 'browThick'],
+  nose: ['bridge', 'bridgeWidth', 'tip', 'ala', 'noseLength'],
+  lips: ['upperLip', 'lowerLip', 'mouthWidth', 'corner', 'cupidsBow'],
+  hair: ['length', 'volume', 'curl', 'highlight'],
+  body: ['shoulderWidth', 'neckLength', 'chestDepth'],
+}
+const AVATAR_ID_RE = /^[a-z][a-z0-9-]{0,23}$/
+const clampInt = (value, low, high) => Math.round(Math.min(high, Math.max(low, value)))
+const sanitizeHsl = value =>
+  value && typeof value === 'object' && !Array.isArray(value) &&
+  [value.h, value.s, value.l].every(part => typeof part === 'number' && Number.isFinite(part))
+    ? { h: clampInt(value.h, 0, 360), s: clampInt(value.s, 0, 100), l: clampInt(value.l, 0, 100) }
+    : null
+const sanitizeAvatarV2 = input => {
+  const out = { version: 2, face: {}, eyes: {}, nose: {}, lips: {}, hair: {}, body: {}, skin: {}, outfit: {}, accessories: [] }
+  const numOr = (value, fallback) => (typeof value === 'number' && Number.isFinite(value) ? clampInt(value, -100, 100) : fallback)
+  const idOr = (value, fallback) => (typeof value === 'string' && AVATAR_ID_RE.test(value) ? value : fallback)
+  for (const [section, keys] of Object.entries(AVATAR_V2_NUMBERS)) {
+    const raw = input[section]
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+    for (const key of keys) out[section][key] = numOr(raw[key], 0)
+  }
+  if (!input.eyes || typeof input.eyes !== 'object') return null
+  out.eyes.iris = idOr(input.eyes.iris, 'dark-brown')
+  const skin = input.skin && typeof input.skin === 'object' ? input.skin : null
+  if (!skin) return null
+  out.skin.tone = sanitizeHsl(skin.tone) || { h: 28, s: 42, l: 86 }
+  out.skin.blush = numOr(skin.blush, 0) < 0 ? 0 : Math.min(100, numOr(skin.blush, 0))
+  out.skin.lipTint = sanitizeHsl(skin.lipTint) || { h: 6, s: 42, l: 52 }
+  out.skin.freckles = ['none', 'light', 'dense'].includes(skin.freckles) ? skin.freckles : 'none'
+  const hair = input.hair && typeof input.hair === 'object' ? input.hair : null
+  if (!hair) return null
+  out.hair.style = idOr(hair.style, 'wavy-mid')
+  out.hair.bangs = idOr(hair.bangs, 'none')
+  out.hair.color = sanitizeHsl(hair.color) || { h: 228, s: 26, l: 13 }
+  const outfit = input.outfit && typeof input.outfit === 'object' ? input.outfit : null
+  if (!outfit) return null
+  out.outfit.top = idOr(outfit.top, 'knit-round')
+  out.outfit.topColor = sanitizeHsl(outfit.topColor) || { h: 42, s: 24, l: 92 }
+  out.outfit.outer = idOr(outfit.outer, 'none')
+  out.outfit.outerColor = sanitizeHsl(outfit.outerColor) || { h: 222, s: 38, l: 30 }
+  if (Array.isArray(input.accessories)) {
+    out.accessories = input.accessories
+      .filter(item => typeof item === 'string' && AVATAR_ID_RE.test(item))
+      .slice(0, 3)
+  }
+  return out
+}
 export function sanitizeAvatar(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return null
+  if (input.version === 2) return sanitizeAvatarV2(input)
   const keys = Object.keys(input)
   if (!keys.length || keys.length > Object.keys(AVATAR_FIELDS).length) return null
   for (const key of keys) {
