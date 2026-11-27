@@ -51,9 +51,84 @@
   color: var(--text);
 }
 
+/* ---------- 樱雨主题（深夜梅紫 · 樱粉点缀） ---------- */
+.shell[data-theme="sakura"] {
+  --bg1: #150c17; --bg2: #221525; --bg3: #2a1a2e;
+  --text: #f4ecf1; --muted: #ab97a6; --faint: #7d6b80;
+  --gold: #f2b7c8; --gold-dim: #cd90a4;
+  --line: rgba(244, 236, 241, .14);
+  --hairline: rgba(242, 183, 200, .34);
+  --glass: rgba(36, 22, 40, .62);
+  --panel: rgba(42, 26, 46, .55);
+  --field: #1c1020;
+  --accent: #d9a8c4;
+  --paper: #f7ecef; --paper-2: #ecdbe2;
+  --ink: #43303a; --ink-soft: #7c6673;
+  --bot-bub: linear-gradient(150deg, rgba(96, 60, 88, .94), rgba(58, 36, 56, .96));
+  --bot-bub-text: #faeef3;
+  --me-bub: linear-gradient(150deg, #6d4252, #52323f);
+  --me-bub-text: #fbece7;
+  --send-g1: #f2b7c8; --send-g2: #cf8fa6;
+  --warn: #ffc2d4;
+  --sky: #1a0f1e; --horizon: #3c2238;
+  color: var(--text);
+}
+
+/* ---------- 奶糖主题（奶油白 · 焦糖点缀） ---------- */
+.shell[data-theme="cream"] {
+  color-scheme: light;
+  --bg1: #f6efe3; --bg2: #faf5ec; --bg3: #f0e6d4;
+  --text: #4d3a28; --muted: #937c62; --faint: #ab947a;
+  --gold: #b07a3f; --gold-dim: #8f6132;
+  --line: rgba(77, 58, 40, .16);
+  --hairline: rgba(176, 122, 63, .4);
+  --glass: rgba(255, 251, 243, .68);
+  --panel: rgba(255, 255, 255, .6);
+  --field: #fffcf4;
+  --accent: #8a9a5b;
+  --paper: #fdf7ea; --paper-2: #f3e8d0;
+  --ink: #4a3826; --ink-soft: #836c53;
+  --bot-bub: linear-gradient(150deg, #fdf9f0, #f0e2c8);
+  --bot-bub-text: #4d3a28;
+  --me-bub: linear-gradient(150deg, #c99b6e, #96632f);
+  --me-bub-text: #fffaf0;
+  --send-g1: #d9ad7c; --send-g2: #b07a3f;
+  --warn: #93350f;
+  --sky: #f0e4cf; --horizon: #e0cdb0;
+  color: var(--text);
+}
+
+/* ---------- 薄荷主题（海盐白 · 青碧点缀） ---------- */
+.shell[data-theme="mint"] {
+  color-scheme: light;
+  --bg1: #e7f4f0; --bg2: #eef7f3; --bg3: #dcefe8;
+  --text: #2b4640; --muted: #5f7a72; --faint: #86a099;
+  --gold: #2f8f79; --gold-dim: #237a66;
+  --line: rgba(43, 70, 64, .15);
+  --hairline: rgba(47, 143, 121, .38);
+  --glass: rgba(255, 255, 255, .64);
+  --panel: rgba(255, 255, 255, .55);
+  --field: #f4fbf8;
+  --accent: #3a8f7b;
+  --paper: #f4fbf7; --paper-2: #dcefe6;
+  --ink: #27423c; --ink-soft: #5c7a71;
+  --bot-bub: linear-gradient(150deg, #f4fbf8, #d9eee5);
+  --bot-bub-text: #27423c;
+  --me-bub: linear-gradient(150deg, #4aa58f, #256f5c);
+  --me-bub-text: #f2fdf9;
+  --send-g1: #86d6c2; --send-g2: #4fae97;
+  --warn: #7c2d1d;
+  --sky: #d9efe7; --horizon: #b9dfcf;
+  color: var(--text);
+}
+
 /* ---------- 基础 ---------- */
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; background: var(--bg1, #060a14); }
+body[data-theme="morning"] { background: #f7f2e6; }
+body[data-theme="sakura"] { background: #150c17; }
+body[data-theme="cream"] { background: #f6efe3; }
+body[data-theme="mint"] { background: #e7f4f0; }
 button, textarea, input { font: inherit; color: inherit; }
 button, summary, a, input, textarea { -webkit-tap-highlight-color: transparent; }
 button {
@@ -116,7 +191,7 @@ small, .muted { color: var(--muted); }
     radial-gradient(1px 1px at 33% 88%, #aeb8cf, transparent 100%);
   animation: drift 9s ease-in-out infinite alternate;
 }
-.shell[data-theme="morning"] .discovery::before { display: none; }
+.shell[data-theme="morning"].discovery::before { display: none; }
 @keyframes drift { from { transform: translateY(0) } to { transform: translateY(-10px) } }
 
 .brand {
@@ -160,7 +235,7 @@ blockquote {
   color: var(--text); font-family: var(--serif); font-size: 1.02rem;
 }
 
-.foyer-heading { display: flex; justify-content: space-between; align-items: center; gap: .5rem; margin-block: .75rem; position: relative; z-index: 1; }
+.foyer-heading { display: flex; justify-content: space-between; align-items: center; gap: .5rem; margin-block: .75rem; }
 .foyer-heading p { margin: 0; font-family: var(--serif); letter-spacing: .14em; color: var(--muted); }
 .foyer-heading button { width: auto; padding: .45rem .85rem; font-size: .78rem; }
 .foyer { display: block; position: relative; z-index: 1; }
@@ -608,9 +683,9 @@ blockquote {
 }
 .tabbar button.active {
   color: var(--gold);
-  background: linear-gradient(150deg, rgba(217, 188, 132, .16), rgba(217, 188, 132, .05));
-  box-shadow: inset 0 0 0 1px rgba(217, 188, 132, .3);
-  text-shadow: 0 0 12px rgba(217, 188, 132, .4);
+  background: linear-gradient(150deg, color-mix(in srgb, var(--gold) 16%, transparent), color-mix(in srgb, var(--gold) 5%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gold) 30%, transparent);
+  text-shadow: 0 0 12px color-mix(in srgb, var(--gold) 40%, transparent);
 }
 .discovery, .me, .moments-screen, .avatar-screen, .services-screen, .rituals-screen { padding-bottom: 5.6rem; }
 
@@ -941,3 +1016,107 @@ blockquote {
   border: 1px solid var(--hairline); background: linear-gradient(150deg, rgba(217, 188, 132, .09), transparent 70%);
   font-family: var(--serif); font-size: .86rem; line-height: 1.85; color: var(--text); }
 .gift-reply::before { content: '—— '; color: var(--gold-dim); }
+
+/* ========== 阶段九：主题小铺 · 樱雨 / 奶糖 / 薄荷 ========== */
+/* 樱雨：星野换樱色，加樱色微光层；浅色主题隐去星野并调暗月牙 */
+.shell[data-theme="sakura"].discovery::before {
+  background-image:
+    radial-gradient(1.5px 1.5px at 12% 22%, #f6d3de, transparent 100%),
+    radial-gradient(1px 1px at 28% 68%, #e7c6d9, transparent 100%),
+    radial-gradient(1.6px 1.6px at 42% 34%, #f6d3de, transparent 100%),
+    radial-gradient(1px 1px at 55% 12%, #dcb4ce, transparent 100%),
+    radial-gradient(1.4px 1.4px at 68% 52%, #f6d3de, transparent 100%),
+    radial-gradient(1px 1px at 79% 80%, #e7c6d9, transparent 100%),
+    radial-gradient(1.6px 1.6px at 88% 28%, #f6d3de, transparent 100%),
+    radial-gradient(1px 1px at 33% 88%, #dcb4ce, transparent 100%);
+}
+.shell[data-theme="cream"].discovery::before,
+.shell[data-theme="mint"].discovery::before { display: none; }
+.shell[data-theme="sakura"].discovery {
+  background:
+    radial-gradient(ellipse at 85% 18%, rgba(242, 183, 200, .09), transparent 46%),
+    linear-gradient(168deg, var(--bg1), var(--bg2) 58%, var(--bg3));
+}
+.shell[data-theme="cream"].discovery {
+  background:
+    radial-gradient(ellipse at 85% 18%, rgba(196, 118, 54, .08), transparent 46%),
+    linear-gradient(168deg, var(--bg1), var(--bg2) 58%, var(--bg3));
+}
+.shell[data-theme="mint"].discovery {
+  background:
+    radial-gradient(ellipse at 85% 18%, rgba(54, 183, 168, .1), transparent 46%),
+    linear-gradient(168deg, var(--bg1), var(--bg2) 58%, var(--bg3));
+}
+.shell[data-theme="sakura"].discovery::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none; opacity: .68;
+  background-image:
+    radial-gradient(ellipse 18px 11px at 18% 32%, rgba(242, 183, 200, .55), transparent 70%),
+    radial-gradient(ellipse 12px 8px at 74% 16%, rgba(242, 183, 200, .45), transparent 70%),
+    radial-gradient(ellipse 15px 9px at 42% 76%, rgba(233, 168, 195, .5), transparent 70%),
+    radial-gradient(ellipse 11px 8px at 88% 60%, rgba(233, 168, 195, .42), transparent 70%),
+    radial-gradient(ellipse 13px 8px at 8% 82%, rgba(242, 183, 200, .38), transparent 70%),
+    radial-gradient(ellipse 10px 7px at 60% 46%, rgba(233, 168, 195, .3), transparent 70%);
+  animation: petal-drift 11s ease-in-out infinite alternate;
+}
+@keyframes petal-drift { from { transform: translateY(0) rotate(0deg) } to { transform: translateY(-16px) rotate(5deg) } }
+.shell[data-theme="cream"] .brand-moon,
+.shell[data-theme="mint"] .brand-moon { opacity: .55; }
+/* 无类名主按钮的主题色光晕（不动 secondary 等已声明阴影的按钮） */
+.shell[data-theme="sakura"] button:not([class]) { box-shadow: 0 8px 22px -10px rgba(232, 138, 154, .5); }
+.shell[data-theme="cream"] button:not([class]) { box-shadow: 0 8px 22px -10px rgba(196, 118, 54, .42); }
+.shell[data-theme="mint"] button:not([class]) { box-shadow: 0 8px 22px -10px rgba(79, 174, 151, .5); }
+/* 信笺河：浅色主题纸面化 */
+.shell[data-theme="cream"] .lantern-river {
+  background: linear-gradient(165deg, rgba(255, 255, 255, .45), rgba(240, 228, 205, .3));
+}
+.shell[data-theme="mint"] .lantern-river {
+  background: linear-gradient(165deg, rgba(255, 255, 255, .5), rgba(216, 238, 229, .35));
+}
+.shell[data-theme="cream"] .bubble.assistant { box-shadow: 0 8px 22px rgba(96, 80, 55, .14); }
+.shell[data-theme="mint"] .bubble.assistant { box-shadow: 0 8px 22px rgba(31, 84, 71, .14); }
+
+/* ---------- 主题小铺面板 ---------- */
+.theme-entry { position: relative; }
+.theme-panel {
+  position: absolute; top: calc(100% + .6rem); right: 0; z-index: 40; width: 15.5rem;
+  padding: .85rem .7rem .7rem; border-radius: 18px;
+  background: var(--glass); border: 1px solid var(--line);
+  box-shadow: 0 22px 48px -20px rgba(0, 0, 0, .6);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  display: grid; gap: .2rem;
+}
+.theme-panel-title { margin: 0 .35rem .1rem; font-family: var(--serif); font-size: .92rem; letter-spacing: .18em; color: var(--gold); }
+.theme-panel-sub { margin: 0 .35rem .5rem; font-size: .66rem; letter-spacing: .1em; color: var(--faint); }
+.theme-option { display: flex; align-items: center; gap: .6rem; min-height: 46px; padding: .4rem .55rem; border-radius: 13px;
+  background: transparent; border: 1px solid transparent; box-shadow: none; text-align: left; }
+.theme-option:hover:not(:disabled) { filter: none; background: color-mix(in srgb, var(--bg2) 55%, transparent); }
+.theme-option.active { border-color: var(--hairline); background: color-mix(in srgb, var(--gold) 9%, transparent); }
+.theme-swatch { width: 2.05rem; height: 2.05rem; border-radius: 10px; flex: none;
+  border: 1px solid var(--line); box-shadow: inset 0 0 10px rgba(255, 255, 255, .1), 0 4px 10px -4px rgba(0, 0, 0, .35); }
+.theme-names { display: grid; gap: .1rem; flex: 1; line-height: 1.3; }
+.theme-names strong { font-size: .86rem; font-weight: 600; color: var(--text); letter-spacing: .04em; }
+.theme-names small { font-size: .66rem; color: var(--muted); letter-spacing: .06em; }
+.theme-check { width: 1.1rem; height: 1.1rem; border-radius: 50%; flex: none;
+  border: 1px solid var(--line); color: var(--gold); font-size: .68rem; display: grid; place-items: center; }
+.theme-option.active .theme-check { border-color: var(--gold); box-shadow: 0 0 10px -2px var(--gold); }
+
+/* ---------- 正在写回信（typing 指示） ---------- */
+.bubble-wrap.typing { min-height: 2.4rem; }
+.typing-bubble { display: flex; align-items: center; gap: .5rem; font-size: .84rem; }
+.typing-dots { display: inline-flex; gap: .3rem; align-items: center; }
+.typing-dots i { width: .34rem; height: .34rem; border-radius: 50%; background: currentColor;
+  animation: typing-breathe 1.5s ease-in-out infinite; }
+.typing-dots i:nth-child(2) { animation-delay: .18s }
+.typing-dots i:nth-child(3) { animation-delay: .36s }
+@keyframes typing-breathe {
+  0%, 100% { opacity: .3; transform: translateY(0) }
+  40% { opacity: 1; transform: translateY(-2px) }
+}
+
+/* ---------- 点赞爱心弹跳 ---------- */
+.moment-like.active { animation: heart-pop .5s cubic-bezier(.2, .8, .3, 1.4); }
+@keyframes heart-pop { 0% { transform: scale(1) } 45% { transform: scale(1.3) } 100% { transform: scale(1) } }
+
+/* ---------- 空态：熄着的河灯相伴 ---------- */
+.empty-state { display: grid; justify-items: center; gap: .85rem; margin: 2.2rem 0; text-align: center; line-height: 1.9; }
+.empty-state .lantern { margin: 0 .25rem; }

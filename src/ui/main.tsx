@@ -150,6 +150,16 @@ function TileIcon({ kind }: { kind: 'cards' | 'rituals' | 'services' | 'avatar' 
   </svg>
 }
 
+/* ---------- 主题小铺 ---------- */
+type ThemeId = 'night' | 'morning' | 'sakura' | 'cream' | 'mint'
+const THEMES: { id: ThemeId; name: string; hint: string; swatch: [string, string] }[] = [
+  { id: 'night', name: '夜航', hint: '深海电台的蓝', swatch: ['#0e1526', '#d9bc84'] },
+  { id: 'morning', name: '晨间', hint: '晒过太阳的纸', swatch: ['#f4eddd', '#a1742c'] },
+  { id: 'sakura', name: '樱雨', hint: '落在发梢的粉色', swatch: ['#241827', '#f2b7c6'] },
+  { id: 'cream', name: '奶糖', hint: '含在嘴里的甜', swatch: ['#f6efe3', '#c47636'] },
+  { id: 'mint', name: '薄荷', hint: '海边吹来的风', swatch: ['#e3f2ec', '#36b7a8'] },
+]
+
 function App() {
   const [screen, setScreen] = useState<'loading' | 'gate' | 'discover' | 'chat' | 'cards' | 'card' | 'me' | 'moments' | 'avatar' | 'services' | 'rituals'>('loading')
   const [messages, setMessages] = useState<Message[]>([])
@@ -164,7 +174,18 @@ function App() {
   const [characters, setCharacters] = useState<Character[]>([])
   const [character, setCharacter] = useState<Character | null>(null)
   const [pickedId, setPickedId] = useState('lin-zhou')
-  const [theme, setTheme] = useState(() => new Date().getHours() >= 6 && new Date().getHours() < 12 ? 'morning' : 'night')
+  const [theme, setTheme] = useState<ThemeId>(() => {
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('wanxin-theme') : null
+    if (saved && THEMES.some(item => item.id === saved)) return saved as ThemeId
+    return new Date().getHours() >= 6 && new Date().getHours() < 12 ? 'morning' : 'night'
+  })
+  const [themeMenu, setThemeMenu] = useState(false)
+  const themePanel = useRef<HTMLDivElement>(null)
+  const themeTrigger = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    document.body.dataset.theme = theme
+    try { localStorage.setItem('wanxin-theme', theme) } catch { /* 隐私模式下静默跳过 */ }
+  }, [theme])
   const foyer = useRef<HTMLDivElement>(null)
   const [returnFromCards, setReturnFromCards] = useState<'chat' | 'discover'>('chat')
   const [failed, setFailed] = useState<Submission | null>(null)
@@ -298,6 +319,22 @@ function App() {
       document.removeEventListener('keydown', keyboard)
     }
   }, [messageMenu])
+
+  useEffect(() => {
+    if (!themeMenu) return
+    function outside(event: PointerEvent) {
+      if (!themePanel.current?.contains(event.target as Node) && !themeTrigger.current?.contains(event.target as Node)) setThemeMenu(false)
+    }
+    function keyboard(event: KeyboardEvent) {
+      if (event.key === 'Escape') { event.preventDefault(); setThemeMenu(false); themeTrigger.current?.focus() }
+    }
+    document.addEventListener('pointerdown', outside)
+    document.addEventListener('keydown', keyboard)
+    return () => {
+      document.removeEventListener('pointerdown', outside)
+      document.removeEventListener('keydown', keyboard)
+    }
+  }, [themeMenu])
 
   function accessError(error: unknown) {
     if (error instanceof ApiError && error.code === 'invitation_required') {
@@ -595,8 +632,12 @@ function App() {
               <button type="button" onClick={() => void send(failed?.requestId === message.requestId ? failed : { requestId: message.requestId!, text: message.content, sourceCardId: message.sourceCardId })}>重试</button>}
           </div>
         </div>)}
-        {(busy || failed || messages.at(-1)?.role === 'assistant') &&
-          <p role="status" className="chat-status">{busy ? '正在处理' : failed ? '回复失败' : '回复已收到'}</p>}
+        {busy && <div className="bubble-wrap assistant typing" role="status" aria-label="正在写回信">
+          <span className="bubble-avatar" aria-hidden="true"><Avatar config={avatarConfig} size={30} glow /></span>
+          <div className="bubble assistant typing-bubble" aria-hidden="true"><span className="typing-dots"><i /><i /><i /></span>正在写回信…</div>
+        </div>}
+        {!busy && (failed || messages.at(-1)?.role === 'assistant') &&
+          <p role="status" className="chat-status">{failed ? '回复失败' : '回复已收到'}</p>}
         <div ref={bottom} />
       </section>
       <div className="composer">
@@ -673,7 +714,7 @@ function App() {
           </div>
         </div>
         <p className="card-count" role="status">{cardQuery.trim() ? `找到 ${visibleCards.length} 段共同经历` : `共 ${cards.length} 段共同经历`}</p>
-        {cards.length === 0 && <p className="muted">这里会收好你与{character?.name ?? '角色'}的片段。<br />回到聊天，选择想留下的消息做成经历卡。</p>}
+        {cards.length === 0 && <div className="empty-state"><span className="lantern dim" aria-hidden="true" /><span className="lantern dim" aria-hidden="true" /><span className="lantern dim" aria-hidden="true" /><p className="muted">这里会收好你与{character?.name ?? '角色'}的片段。<br />回到聊天，选择想留下的消息做成经历卡。</p></div>}
         {cards.length > 0 && visibleCards.length === 0 && <p className="muted">没有找到这个片段，换个关键词或清空搜索试试。</p>}
         {cardGroups.map(group => <section className="card-month" aria-label={group.label} key={group.key}>
           <h2>{group.label}<small>{group.cards.length} 段</small></h2>
@@ -760,9 +801,22 @@ function App() {
       {screen === 'discover' && <section className="intro">
         <div className="foyer-heading">
           <p>{new Date().getHours() < 6 ? '夜深了' : new Date().getHours() < 12 ? '早上好' : new Date().getHours() < 18 ? '下午好' : '晚上好'} · 今晚节目单</p>
-          <button onClick={() => setTheme(theme === 'night' ? 'morning' : 'night')} className="icon-btn theme-toggle" aria-label={theme === 'night' ? '切换到晨间主题' : '切换到夜航主题'} title={theme === 'night' ? '晨间主题' : '夜海主题'}>{theme === 'night'
-            ? <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2" /><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.2 5.2l1.7 1.7M17.1 17.1l1.7 1.7M18.8 5.2l-1.7 1.7M6.9 17.1l-1.7 1.7" /></svg>
-            : <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" /></svg>}</button>
+          <div className="theme-entry">
+            <button ref={themeTrigger} onClick={() => setThemeMenu(value => !value)} className="icon-btn theme-toggle" aria-label="主题小铺" aria-haspopup="menu" aria-expanded={themeMenu} title="主题小铺">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18c1.2 0 1.9-.9 1.6-1.8-.2-1 .5-1.7 1.5-1.7h1.4a4.5 4.5 0 0 0 4.5-4.5C20 7.8 16.5 3 12 3Z" /><circle cx="7.6" cy="11" r="1" fill="currentColor" stroke="none" /><circle cx="10.6" cy="7.6" r="1" fill="currentColor" stroke="none" /><circle cx="15" cy="7.6" r="1" fill="currentColor" stroke="none" /><circle cx="17.2" cy="11.2" r="1" fill="currentColor" stroke="none" /><circle cx="9.2" cy="14.8" r="1" fill="currentColor" stroke="none" /></svg>
+            </button>
+            {themeMenu && <div className="theme-panel" role="menu" aria-label="选择主题" ref={themePanel}>
+              <p className="theme-panel-title">主题小铺</p>
+              <p className="theme-panel-sub">挑一个今晚的心情</p>
+              {THEMES.map(item => (
+                <button type="button" role="menuitemradio" key={item.id} className={'theme-option' + (theme === item.id ? ' active' : '')}
+                  aria-checked={theme === item.id} onClick={() => { setTheme(item.id); setThemeMenu(false) }}>
+                  <span className="theme-swatch" style={{ background: `linear-gradient(135deg, ${item.swatch[0]}, ${item.swatch[1]})` }} aria-hidden="true" />
+                  <span className="theme-names"><strong>{item.name}</strong><small>{item.hint}</small></span>
+                  <span className="theme-check" aria-hidden="true">{theme === item.id ? '✓' : ''}</span>
+                </button>))}
+            </div>}
+          </div>
         </div>
         {weatherAvailable && <Weather city={city} selectCity={setCity} />}
         <div className="foyer" ref={foyer}>

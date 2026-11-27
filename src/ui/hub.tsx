@@ -233,7 +233,7 @@ export function MomentsScreen({ api, onError, character, avatar }: { api: Api; o
       </button>
     </div>
     {notice && <p role="status">{notice}</p>}
-    {!moments.length && <p className="muted moments-empty">还没有动态。留下一句，或者让TA先说。</p>}
+    {!moments.length && <div className="moments-empty empty-state"><span className="lantern dim" aria-hidden="true" /><span className="lantern dim" aria-hidden="true" /><span className="lantern dim" aria-hidden="true" /><p className="muted">还没有动态。留下一句，或者让TA先说。</p></div>}
     <div className="moment-groups">
       {moments.reduce<{ day: string; items: Moment[] }[]>((groups, moment) => {
         const day = dayLabel(moment.createdAt)
