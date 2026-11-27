@@ -8,6 +8,7 @@ import { RitualsScreen } from './rituals'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
+import { ErrorBoundary } from './error-boundary'
 
 /* M6 PWA：生产构建注册 Service Worker（静态缓存+离线壳），dev 不注册。 */
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
@@ -971,4 +972,4 @@ function App() {
   </main>
 }
 
-createRoot(document.getElementById('root')!).render(<App />)
+createRoot(document.getElementById('root')!).render(<ErrorBoundary><App /></ErrorBoundary>)

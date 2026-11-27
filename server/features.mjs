@@ -583,6 +583,14 @@ export function createFeatures(db, { authorization, usage, analytics, telemetry,
       return { status: 200, data: { memories: memoryRows.all(threadId) } }
     }
 
+    if (resource === 'memories' && method === 'DELETE' && arg) {
+      // 删除自己的单条记忆（用户控制感）；跨线程删除 404，不泄露存在性
+      const row = db.prepare('SELECT id FROM memory_facts WHERE id = ? AND threadId = ?').get(arg, threadId)
+      if (!row) return { status: 404, data: { error: '这条记忆不在了。' } }
+      db.prepare('DELETE FROM memory_facts WHERE id = ? AND threadId = ?').run(arg, threadId)
+      return { status: 200, data: { ok: true } }
+    }
+
     if (resource === 'feedback' && method === 'POST') {
       const content = typeof body?.content === 'string' ? body.content.trim() : ''
       if (!content || Array.from(content).length > 500) return { status: 400, data: { error: '写 1–500 字' } }

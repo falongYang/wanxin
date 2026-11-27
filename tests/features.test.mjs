@@ -583,3 +583,28 @@ test('care/memory 新网关操作在受控模式下可 reserve 不再 operation_
   // 等待 fire-and-forget 记忆 promise 完全排干，避免 teardown 清理与异步收尾竞态（instance-lock ENOENT）
   await new Promise(resolve => setTimeout(resolve, 50))
 })
+
+test('记忆删除：自己的可删、跨线程 404、删除后列表同步', async t => {
+  const reply = async () => '合成回复'
+  reply.remember = async () => '她养了一只叫馒头的橘猫'
+  const app = createApp(':memory:', reply, { access: developmentPolicy() })
+  t.after(() => app.emit('close'))
+  const request = makeClient(app)
+  const a = await session(request)
+  const b = await session(request)
+  await request('messages', { requestId: 'f1', text: '我家橘猫叫馒头，天天趴我键盘上睡觉。' }, a)
+  await request('messages', { requestId: 'f2', text: '我最近喜欢喝燕麦拿铁，每天一杯。' }, b)
+  await new Promise(resolve => setImmediate(resolve))
+  const aMem = (await request('memories', null, a)).json().memories
+  assert.equal(aMem.length, 1)
+  // b 删 a 的记忆 → 404（不泄露存在性）
+  assert.equal((await request('memories/' + aMem[0].id, undefined, b, 'DELETE')).status, 404)
+  // a 删自己的 → 成功且列表清空
+  const del = await request('memories/' + aMem[0].id, undefined, a, 'DELETE')
+  assert.equal(del.status, 200)
+  assert.equal((await request('memories', null, a)).json().memories.length, 0)
+  // b 的记忆不受影响
+  assert.equal((await request('memories', null, b)).json().memories.length, 1)
+  // 删除不存在的 → 404
+  assert.equal((await request('memories/not-exist', undefined, a, 'DELETE')).status, 404)
+})

@@ -49,6 +49,7 @@
   "src/ui/avatar.tsx",
   "src/ui/avatar2d.ts",
   "src/ui/card-library.d.ts",
+  "src/ui/error-boundary.tsx",
   "src/ui/card-library.js",
   "src/ui/hub.tsx",
   "src/ui/main.tsx",

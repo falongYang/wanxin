@@ -73,6 +73,16 @@ export function MeScreen({ api, onError, character, refreshHome, home, avatar, o
   }
   useEffect(() => { void load() }, [])
 
+  async function forget(id: string) {
+    if (busy) return
+    if (!window.confirm('让 TA 忘掉这件事？')) return
+    setBusy(true)
+    try {
+      await api('memories/' + id, undefined, 'DELETE')
+      setMemories(previous => previous?.filter(item => item.id !== id) ?? previous)
+    } catch { onError('没删掉，稍后再试。') } finally { setBusy(false) }
+  }
+
   async function sendFeedback(event: FormEvent) {
     event.preventDefault()
     const content = feedbackDraft.trim()
@@ -123,9 +133,12 @@ export function MeScreen({ api, onError, character, refreshHome, home, avatar, o
       <blockquote>{home.care.today}</blockquote>
     </div>}
     <div className="me-card me-memory">
-      <h2>TA 还记得</h2>
+      <h2>TA 还记得{memories && memories.length > 0 && <small className="memory-count">· {memories.length} 件</small>}</h2>
       {memories && memories.length > 0 ? <ul className="memory-list">
-        {memories.map(item => <li key={item.id}>{item.fact}</li>)}
+        {memories.map(item => <li key={item.id}>
+          <span>{item.fact}</span>
+          <button type="button" className="memory-del" aria-label="让TA忘掉这件事" title="让TA忘掉这件事" disabled={busy} onClick={() => void forget(item.id)}>忘掉</button>
+        </li>)}
       </ul> : <p className="me-hint">TA 还在慢慢认识你。多说说自己的事，TA 会记在心里。</p>}
     </div>
     <div className="me-grid">
