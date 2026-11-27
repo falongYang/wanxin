@@ -49,7 +49,7 @@ export function createUsage(db, policy, clock) {
     },
     reserve(subject, requestHash, operation = 'message') {
       if (!controlled) return null
-      if (!['message', 'preview', 'moment', 'letter'].includes(operation)) throw new ControlError(503, 'operation_denied')
+      if (!['message', 'preview', 'moment', 'letter', 'care', 'memory'].includes(operation)) throw new ControlError(503, 'operation_denied')
       checkClock()
       if (!db.prepare('SELECT callsEnabled FROM runtime_control WHERE id=1').get().callsEnabled) throw new ControlError(503, 'calls_stopped')
       const active = db.prepare("SELECT count(*) n FROM call_attempts WHERE state IN ('reserved','timeout_pending')").get().n

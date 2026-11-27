@@ -547,3 +547,39 @@ test('每日小纸条：home 聚合携带 care 且当天幂等', async t => {
   const home2 = (await request('home', null, cookie)).json()
   assert.equal(home2.care.today, home1.care.today, '当天小纸条应缓存复用')
 })
+
+test('care/memory 新网关操作在受控模式下可 reserve 不再 operation_denied', async t => {
+  const f = fixture(t)
+  // 记忆提取为 fire-and-forget，放宽 fixture 默认的 subjectDaily/inFlight 以免网关限流掩盖断言
+  const { loadPolicy } = await import('../server/access.mjs')
+  f.env.ACCESS_LIMITS = JSON.stringify({ subjectDaily: 10, globalDaily: 20, subjectMinute: 10, globalMinute: 20, inFlight: 3, redeemSource: 3, redeemGlobal: 5, endpointMinute: 30, timeZone: 'Asia/Shanghai' })
+  const relaxed = loadPolicy(f.env)
+  const db = new DatabaseSync(f.env.SQLITE_PATH)
+  f.after(() => db.close())
+  const reply = async (messages, signal, system) => {
+    // 简单模拟：care 返回一句话；聊天正文随消息返回
+    const last = messages.at(-1)?.content ?? ''
+    if (system?.includes('小纸条') || last.includes('小纸条')) return '今晚风轻，替你留了一盏灯。'
+    return '好，先听你说。'
+  }
+  reply.remember = async () => '她喜欢在下雨天听电台写日记' // 模拟记忆提取（真实实现走 rememberSystem）
+  const app = createApp(f.env.SQLITE_PATH, reply, { access: relaxed })
+  f.after(() => app.emit('close'))
+  db.exec('UPDATE runtime_control SET callsEnabled=1') // 受控模式默认停用模型调用，显式开启
+  const request = makeClient(app)
+  const cookie = await session(request, undefined, f.token)
+  const home = await request('home', null, cookie)
+  assert.equal(home.status, 200)
+  assert.ok((home.json().care?.today ?? '').length > 0, 'care 应有内容（模型或降级）')
+  await request('messages', { requestId: 'gw1', text: '我很喜欢在下雨天听电台写日记，这是我的小习惯。' }, cookie)
+  // 记忆提取为 fire-and-forget 异步，轮询等待落库
+  let mem = { memories: [] }
+  for (let i = 0; i < 40 && mem.memories.length === 0; i++) {
+    await new Promise(resolve => setImmediate(resolve))
+    mem = (await request('memories', null, cookie)).json()
+  }
+  assert.equal(mem.memories.length, 1, '记忆应入库')
+  assert.equal(mem.memories[0].fact, '她喜欢在下雨天听电台写日记')
+  // 等待 fire-and-forget 记忆 promise 完全排干，避免 teardown 清理与异步收尾竞态（instance-lock ENOENT）
+  await new Promise(resolve => setTimeout(resolve, 50))
+})
