@@ -220,6 +220,7 @@ function App() {
   const menuPanel = useRef<HTMLDivElement>(null)
   const menuTrigger = useRef<HTMLButtonElement | null>(null)
   const input = useRef<HTMLTextAreaElement>(null)
+  const voiceRecognition = useRef<{ stop?: () => void; abort?: () => void } | null>(null)
   const bottom = useRef<HTMLDivElement>(null)
   const sending = useRef(false)
   const [listening, setListening] = useState(false)
@@ -496,27 +497,70 @@ function App() {
     setDraft('')
   }
 
+  /* ---------- 语音输入（Web Speech API） ----------
+   * 连续识别 + 实时中间结果；再次点击可手动停止；错误按类型提示；
+   * 非安全上下文（HTTP 非localhost）浏览器禁止麦克风，给出明确解释。
+   * 仅写入 draft，与手动输入共用同一入口，不影响发送/队列逻辑。 */
   function startVoice() {
+    // 正在听：本次点击视为手动停止
+    if (listening) {
+      try { voiceRecognition.current?.stop?.() } catch { /* 已停止则忽略 */ }
+      return
+    }
     const Ctor = (window as unknown as { SpeechRecognition?: new () => any; webkitSpeechRecognition?: new () => any })
     const Recognition = Ctor.SpeechRecognition || Ctor.webkitSpeechRecognition
+    if (!window.isSecureContext) {
+      setError('当前通过 HTTP 访问，浏览器不允许使用麦克风。正式域名（HTTPS）上线后即可语音，暂时请打字输入。')
+      return
+    }
     if (!Recognition) { setError('当前浏览器不支持语音输入，可以手动输入。'); return }
     setError('')
     setListening(true)
     const recognition = new Recognition()
+    voiceRecognition.current = recognition
     recognition.lang = 'zh-CN'
-    recognition.interimResults = false
+    recognition.continuous = true
+    recognition.interimResults = true
     recognition.maxAlternatives = 1
-    recognition.onresult = (event: { results?: ArrayLike<ArrayLike<{ transcript?: string } | undefined>> }) => {
-      const text = event.results?.[0]?.[0]?.transcript ?? ''
-      if (text) setDraft(previous => Array.from((previous + ' ' + text).trim()).slice(0, 1000).join(''))
+    // 基线：语音开始时已有的文字；final 结果累积进基线，interim 只实时展示
+    let base = draft
+    const finish = () => { setListening(false); voiceRecognition.current = null; window.clearTimeout(watchdog) }
+    const watchdog = window.setTimeout(() => {
+      try { recognition.abort() } catch { /* 忽略 */ }
+      setListening(false); voiceRecognition.current = null
+      setError('语音输入没有响应，可以再试一次。')
+    }, 20000)
+    recognition.onresult = (event: { resultIndex?: number; results?: ArrayLike<{ isFinal?: boolean; length: number; [index: number]: { transcript?: string } | undefined }> }) => {
+      window.clearTimeout(watchdog)
+      let finalText = '', interim = ''
+      for (let index = event.resultIndex ?? 0; index < (event.results?.length ?? 0); index++) {
+        const result = event.results?.[index]
+        const piece = (result?.[0]?.transcript ?? '').trim()
+        if (!piece) continue
+        if (result?.isFinal) finalText += piece
+        else interim += piece
+      }
+      if (finalText) base = (base ? base + ' ' : '') + finalText.trim()
+      const shown = [base, interim.trim()].filter(Boolean).join(' ')
+      setDraft(shown ? Array.from(shown).slice(0, 1000).join('') : '')
     }
-    recognition.onerror = () => {
-      setListening(false)
-      setError('没有听清，可以再试一次。')
+    recognition.onerror = (event: { error?: string }) => {
+      const code = event?.error ?? ''
+      const hint = code === 'not-allowed' || code === 'service-not-allowed'
+        ? '浏览器拒绝了麦克风权限。可以在地址栏权限设置里允许麦克风后重试。'
+        : code === 'no-speech' ? '没有听到声音，靠近一点再说一次试试。'
+        : code === 'audio-capture' ? '没有找到可用的麦克风设备。'
+        : code === 'network' ? '语音服务网络异常，稍后再试。'
+        : code === 'aborted' ? ''
+        : '语音输入遇到问题，可以再试一次。'
+      if (hint) setError(hint)
+      if (code !== 'aborted') setListening(false)
+      voiceRecognition.current = null
+      window.clearTimeout(watchdog)
     }
-    recognition.onend = () => setListening(false)
+    recognition.onend = finish
     try { recognition.start() } catch {
-      setListening(false)
+      finish()
       setError('语音输入未能启动，可以手动输入。')
     }
   }
@@ -733,8 +777,8 @@ function App() {
               }
             }}
             onChange={event => setDraft(Array.from(event.target.value).slice(0, 1000).join(''))} />
-          <button type="button" className="voice" disabled={busy || listening} onClick={startVoice}
-            aria-label="语音输入">{listening ? '正在听…' : '语音'}</button>
+          <button type="button" className="voice" disabled={busy} onClick={startVoice}
+            aria-label={listening ? '停止语音输入' : '语音输入'} title={listening ? '点击停止录音' : '语音输入'}>{listening ? '■ 停止' : '语音'}</button>
           <button disabled={busy || !draft.trim() || !!failed} type="button" onClick={enqueue}>{editing ? '保存' : '待发'}</button>
           {editing
             ? <button type="button" onClick={() => { setEditing(null); setDraft('') }}>取消</button>
