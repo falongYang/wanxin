@@ -1,9 +1,11 @@
 import { groupCards } from './card-library.js'
 import { MeScreen, MomentsScreen, BondBar, type Bond, type Home } from './hub'
-import { AvatarScreen, Avatar, CHARACTER_DEFAULT_AVATAR, FALLBACK_AVATAR, mergeAvatar, type AvatarConfig } from './avatar'
+import { AvatarScreen, Avatar, CHARACTER_DEFAULT_AVATAR, FALLBACK_AVATAR, type AvatarConfig } from './avatar'
+import type { EngineTheme } from './avatar3d'
+import { applyV1ToV2, coerceV2, defaultConfigFor, isWebGLAvailable, projectV2toV1, type AvatarConfigV2 } from './avatar-catalog'
 import { ServicesScreen, detectServiceHint, fetchServices, openService, type ServiceItem } from './services'
 import { RitualsScreen } from './rituals'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import './style.css'
@@ -216,10 +218,17 @@ function App() {
   const [listening, setListening] = useState(false)
   const [bond, setBond] = useState<Bond | null>(null)
   const [home, setHome] = useState<Home | null>(null)
-  const [avatarOverride, setAvatarOverride] = useState<Partial<AvatarConfig> | null>(null)
+  const [avatarRaw, setAvatarRaw] = useState<Record<string, unknown> | null>(null)
+  const [avatarImage, setAvatarImage] = useState<string | null>(null)
+  const [defaultShots, setDefaultShots] = useState<Record<string, string>>({})
   const [services, setServices] = useState<ServiceItem[]>([])
   const [avatarReturn, setAvatarReturn] = useState<'me' | 'discover'>('me')
-  const avatarConfig = mergeAvatar((character && CHARACTER_DEFAULT_AVATAR[character.id]) || FALLBACK_AVATAR, avatarOverride)
+  const avatarV2 = useMemo<AvatarConfigV2>(() => {
+    if (avatarRaw && avatarRaw.version === 2) return coerceV2(avatarRaw) ?? defaultConfigFor(character?.id)
+    return applyV1ToV2(character?.id, avatarRaw as never)
+  }, [avatarRaw, character?.id])
+  const hasWebGL = useMemo(() => isWebGLAvailable(), [])
+  const snapshotKey = useMemo(() => JSON.stringify(avatarV2) + ':' + theme, [avatarV2, theme])
   const serviceHint = screen === 'chat' && !busy ? detectServiceHint(draft, services) : null
   const reloadHome = () => {
     void api<Home>('home').then(result => { setHome(result); setBond(result.bond) }).catch(() => {})
@@ -243,8 +252,8 @@ function App() {
       }
       setScreen(session.threadId ? 'discover' : 'gate')
       if (session.threadId) {
-        void api<{ config: Partial<AvatarConfig> | null }>('avatar')
-          .then(({ config }) => setAvatarOverride(config)).catch(() => {})
+        void api<{ config: Record<string, unknown> | null }>('avatar')
+          .then(({ config }) => setAvatarRaw(config)).catch(() => {})
         void fetchServices(api).then(setServices).catch(() => {})
       }
     } catch {
@@ -253,6 +262,37 @@ function App() {
   }
 
   useEffect(() => { void load() }, [])
+  // 全站头像：形象或主题变化后重新渲染 3D 快照（带缓存；three.js 按需异步加载）
+  useEffect(() => {
+    if (!hasWebGL) { setAvatarImage(null); return }
+    let active = true
+    const timer = window.setTimeout(() => {
+      void import('./avatar3d').then(module => {
+        if (!active) return
+        const url = module.renderSnapshot(avatarV2, 256, theme as EngineTheme, snapshotKey)
+        if (active && url) setAvatarImage(url)
+      })
+    }, 160)
+    return () => { active = false; window.clearTimeout(timer) }
+  }, [avatarV2, theme, hasWebGL, snapshotKey])
+  // 门页三角色默认形象快照（按角色 + 主题缓存）
+  useEffect(() => {
+    if (!hasWebGL || !characters.length) return
+    let active = true
+    void import('./avatar3d').then(module => {
+      if (!active) return
+      const shots: Record<string, string> = {}
+      for (const item of characters) {
+        shots[item.id] = module.renderSnapshot(defaultConfigFor(item.id), 256, theme as EngineTheme, 'default:' + item.id + ':' + theme)
+        if (!active) return
+      }
+      if (active) setDefaultShots(shots)
+    })
+    return () => { active = false }
+  }, [characters, theme, hasWebGL])
+  const avatarNode = (size: number, glow = false) => avatarImage
+    ? <img className={'avatar av3-photo' + (glow ? ' glow' : '')} src={avatarImage} width={size} height={size} alt="" aria-hidden="true" />
+    : <Avatar config={projectV2toV1(avatarV2)} size={size} glow={glow} />
   useEffect(() => {
     if (screen !== 'chat') return
     if (sourceTarget) {
@@ -600,7 +640,7 @@ function App() {
     {screen === 'chat' ? <>
       <header className="chat-header">
         <button type="button" disabled={busy} onClick={() => { setError(''); setScreen('discover') }}>返回</button>
-        <div className="chat-who"><Avatar config={avatarConfig} size={38} /><span><strong>{character?.name ?? '角色'}</strong><small>AI 虚构角色</small></span></div>
+        <div className="chat-who">{avatarNode(38)}<span><strong>{character?.name ?? '角色'}</strong><small>AI 虚构角色</small></span></div>
         <button type="button" disabled={busy} onClick={() => { setReturnFromCards('chat'); void cardAction(showCards) }} className="icon-btn" aria-label="共同经历" title="共同经历"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3.5" y="6.5" width="17" height="12" rx="2.5" /><path d="m4.5 8.5 7.5 5.5 7.5-5.5" /></svg></button>
         <details className="chat-menu"><summary>菜单</summary>
           <button type="button" disabled={busy} onClick={() => void clearSession()}>清除会话</button>
@@ -609,7 +649,7 @@ function App() {
       <section className="history" aria-label="聊天记录"><p className="history-intro">{character?.scene ?? '深夜 · 想说的话，这里都听得到'}</p>
         <ConversationDrawer messages={messages} busy={busy} togglePin={message => void togglePin(message)} />
         {messages.map(message => <div className={'bubble-wrap ' + message.role} key={message.id}>
-          {message.role === 'assistant' && <span className="bubble-avatar" aria-hidden="true"><Avatar config={avatarConfig} size={30} glow /></span>}
+          {message.role === 'assistant' && <span className="bubble-avatar" aria-hidden="true">{avatarNode(30, true)}</span>}
           <div id={'message-' + message.id} tabIndex={-1} className={'bubble ' + message.role + (highlighted === message.id ? ' source-highlight' : '')}>
             {message.content}
             {message.contextCount != null && <ReplyActivity message={message} name={character?.name} />}
@@ -633,7 +673,7 @@ function App() {
           </div>
         </div>)}
         {busy && <div className="bubble-wrap assistant typing" role="status" aria-label="正在写回信">
-          <span className="bubble-avatar" aria-hidden="true"><Avatar config={avatarConfig} size={30} glow /></span>
+          <span className="bubble-avatar" aria-hidden="true">{avatarNode(30, true)}</span>
           <div className="bubble assistant typing-bubble" aria-hidden="true"><span className="typing-dots"><i /><i /><i /></span>正在写回信…</div>
         </div>}
         {!busy && (failed || messages.at(-1)?.role === 'assistant') &&
@@ -788,7 +828,9 @@ function App() {
           <legend>选择今晚想见的人</legend>
           {characters.map(item => <label key={item.id} className={'character-option' + (pickedId === item.id ? ' active' : '')}>
             <input type="radio" name="character" checked={pickedId === item.id} onChange={() => setPickedId(item.id)} />
-            <span className="pick-avatar" aria-hidden="true"><Avatar config={CHARACTER_DEFAULT_AVATAR[item.id] ?? FALLBACK_AVATAR} size={44} /></span>
+            <span className="pick-avatar" aria-hidden="true">{defaultShots[item.id]
+              ? <img className="avatar av3-photo" src={defaultShots[item.id]} width={44} height={44} alt="" aria-hidden="true" />
+              : <Avatar config={CHARACTER_DEFAULT_AVATAR[item.id] ?? FALLBACK_AVATAR} size={44} />}</span>
             <span className="pick-text"><strong>{item.name}</strong><small>{item.scene}</small></span>
             <span className="pick-dot" aria-hidden="true" />
           </label>)}
@@ -829,7 +871,7 @@ function App() {
               <BondBar bond={bond} compact />
               <button disabled={busy} onClick={() => void openChat()}>和{character?.name ?? '角色'}聊天</button>
             </div>
-            <div className="radio-scene" aria-hidden="true"><div className="foyer-avatar"><Avatar config={avatarConfig} size={88} glow /></div></div>
+            <div className="radio-scene" aria-hidden="true"><div className="foyer-avatar">{avatarNode(88, true)}</div></div>
           </article>
         </div>
         <div className="foyer-grid" aria-label="功能入口">
@@ -856,9 +898,15 @@ function App() {
           </button>
         </div>
       </section>}
-      {screen === 'me' && <MeScreen api={api} onError={message => setError(message)} character={character} refreshHome={reloadHome} home={home} avatar={<Avatar config={avatarConfig} size={72} glow />} onEditAvatar={() => { setAvatarReturn('me'); setError(''); setScreen('avatar') }} />}
-      {screen === 'moments' && <MomentsScreen api={api} onError={message => setError(message)} character={character} avatar={<Avatar config={avatarConfig} size={34} />} />}
-      {screen === 'avatar' && <AvatarScreen api={api} onError={message => setError(message)} characterId={character?.id} characterName={character?.name ?? 'TA'} onSaved={config => setAvatarOverride(config)} onClose={() => { setError(''); setScreen(avatarReturn) }} />}
+      {screen === 'me' && <MeScreen api={api} onError={message => setError(message)} character={character} refreshHome={reloadHome} home={home} avatar={avatarNode(72, true)} onEditAvatar={() => { setAvatarReturn('me'); setError(''); setScreen('avatar') }} />}
+      {screen === 'moments' && <MomentsScreen api={api} onError={message => setError(message)} character={character} avatar={avatarNode(34)} />}
+      {screen === 'avatar' && <AvatarScreen api={api} onError={message => setError(message)} characterId={character?.id} characterName={character?.name ?? 'TA'} theme={theme as EngineTheme} onSaved={config => {
+        setAvatarRaw(config as unknown as Record<string, unknown>)
+        void import('./avatar3d').then(module => {
+          const url = module.renderSnapshot(config, 256, theme as EngineTheme, JSON.stringify(config) + ':' + theme)
+          if (url) setAvatarImage(url)
+        })
+      }} onClose={() => { setError(''); setScreen(avatarReturn) }} />}
       {screen === 'services' && <ServicesScreen api={api} onError={message => setError(message)} services={services} />}
       {screen === 'rituals' && <RitualsScreen api={api} onError={message => setError(message)} character={character} />}
       {(screen === 'discover' || screen === 'me' || screen === 'moments' || screen === 'avatar' || screen === 'services' || screen === 'rituals') && <nav className="tabbar" aria-label="主导航">

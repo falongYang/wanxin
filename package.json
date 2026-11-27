@@ -2,13 +2,25 @@
   "name": "wanxin",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22.13" },
+  "engines": {
+    "node": ">=22.13"
+  },
   "scripts": {
     "dev": "vite",
     "api": "node --env-file-if-exists=.env server/index.mjs",
     "test": "node --test",
     "build": "tsc --noEmit && vite build"
   },
-  "dependencies": { "react": "19.0.0", "react-dom": "19.0.0" },
-  "devDependencies": { "@types/react": "19.0.0", "@types/react-dom": "19.0.0", "typescript": "5.9.3", "vite": "6.0.7" }
+  "dependencies": {
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.0.0",
+    "@types/react-dom": "19.0.0",
+    "@types/three": "^0.187.0",
+    "typescript": "5.9.3",
+    "vite": "6.0.7"
+  }
 }
