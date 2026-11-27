@@ -1,17 +1,17 @@
-// 捏捏形象：Schema v2 编辑器（3D 舞台 + 高自由度面板）与 SVG 降级编辑器。
-// 3D 部分为全程序化原创人像（avatar3d.ts），无外部素材；SVG 头像保留为无 WebGL 环境的降级渲染。
+// 造型小屋：2.5D 插画形象系统（S11 · 造型包体系）
+// 形象 = AI 插画立绘整图（观感=设计稿）+ Layer2D 动效（眨眼/呼吸/视差/说话）。
+// v1 SVG 头像保留为素材加载失败时的降级渲染。
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { FormEvent, ReactNode } from 'react'
-import type { AvatarEngine, EngineTheme, PickRegion } from './avatar3d'
+import type { ReactNode } from 'react'
 import {
-  ACCESSORY_ITEMS, BANGS, BODY_SLIDERS, CHARACTER_DEFAULTS_V2, EYE_SLIDERS, FACE_SLIDERS, FRECKLE_STYLES, HAIR_SLIDERS, HAIR_STYLES, HAIR_SWATCHES, IRIS_COLORS, isWebGLAvailable,
-  LIP_SLIDERS, LIP_SWATCHES, NOSE_SLIDERS, OUTFIT_SWATCHES, SKIN_SWATCHES, TOPS, OUTERS,
-  applyV1ToV2, clamp, coerceV2, decodeShare, defaultConfigFor, encodeShare, hslToHex, projectV2toV1, randomizeV2,
-  type AvatarConfigV2, type HSL, type Option, type RandomMode, type SliderMeta, type Swatch,
-} from './avatar-catalog'
+  CHARACTER_PACKS, decodeShareV3, defaultConfigV3, encodeShareV3, expressionFrame,
+  isCharacterId, coerceV3, migrateToV3,
+  type AvatarConfigV3, type CharacterId,
+} from './avatar-packs'
+import { Layer2D, renderPackSnapshot, type AtmosphereKey } from './avatar2d'
 
 /* ========================================================================
- * 第一部分：SVG 降级头像（v1，保持既有行为）
+ * 第一部分：SVG 降级头像（v1，素材加载失败时的兜底渲染）
  * ======================================================================== */
 export type AvatarConfig = {
   skin: number
@@ -24,18 +24,6 @@ export type AvatarConfig = {
   outfitColor: number
   accessory: string
 }
-
-export const AVATAR_OPTIONS = {
-  skin: ['暖白', '浅麦', '蜜棕'],
-  hair: ['长直发', '短发', '卷发', '马尾'],
-  hairColor: ['墨夜', '栗棕', '焦糖', '枫木', '雾紫', '银灰'],
-  eyes: ['圆眼', '弯月', '星星', '困困'],
-  mouth: ['微笑', '小圆', '平直', '猫嘴'],
-  blush: ['无', '浅浅', '绯红'],
-  outfit: ['圆领', '衬衫', '围巾', '连帽'],
-  outfitColor: ['藏蓝', '暗紫', '苔绿', '焦棕', '酒红', '青灰'],
-  accessory: ['无', '星发夹', '耳钉', '圆眼镜', '缎带'],
-} as const
 
 const SKIN = ['#f6dcc4', '#f0c8a8', '#d8a97e']
 const HAIR = ['#2c2c34', '#4a3728', '#a8763e', '#7a5230', '#5b4b6e', '#8d8a96']
@@ -122,452 +110,174 @@ export function Avatar({ config, size = 64, glow }: { config: AvatarConfig; size
   </svg>
 }
 
-// 每个角色的默认形象（v1 投影：由 v2 默认形象降级而来，保证两套渲染观感一致）
-export const CHARACTER_DEFAULT_AVATAR: Record<string, AvatarConfig> = Object.fromEntries(
-  Object.entries(CHARACTER_DEFAULTS_V2).map(([id, config]) => [id, projectV2toV1(config)]),
-)
+export const CHARACTER_DEFAULT_AVATAR: Record<string, AvatarConfig> = {
+  'lin-zhou': { skin: 0, hair: '卷发', hairColor: 0, eyes: '弯月', mouth: '微笑', blush: '浅浅', outfit: '围巾', outfitColor: 0, accessory: '无' },
+  'gu-chuan': { skin: 0, hair: '短发', hairColor: 0, eyes: '圆眼', mouth: '平直', blush: '无', outfit: '衬衫', outfitColor: 3, accessory: '圆眼镜' },
+  'su-mian': { skin: 0, hair: '长直发', hairColor: 0, eyes: '星星', mouth: '猫嘴', blush: '浅浅', outfit: '连帽', outfitColor: 0, accessory: '星发夹' },
+}
 export const FALLBACK_AVATAR: AvatarConfig = CHARACTER_DEFAULT_AVATAR['lin-zhou']
   ?? { skin: 0, hair: '长直发', hairColor: 0, eyes: '圆眼', mouth: '微笑', blush: '浅浅', outfit: '围巾', outfitColor: 0, accessory: '无' }
 
-export function mergeAvatar(base: AvatarConfig, override: Partial<AvatarConfig> | null | undefined): AvatarConfig {
-  if (!override) return base
-  const merged: AvatarConfig = { ...base }
-  for (const key of Object.keys(override) as (keyof AvatarConfig)[]) {
-    const value = override[key]
-    if (typeof value === 'string' || typeof value === 'number') (merged as Record<string, unknown>)[key] = value
-  }
-  return merged
+/* ========================================================================
+ * 第二部分：Layer2D 挂载组件
+ * ======================================================================== */
+
+export interface LiveStageProps {
+  characterId: string
+  config: AvatarConfigV3
+  atmosphere?: AtmosphereKey
+  talking?: boolean
+  parallax?: number
+  className?: string
+  frameFill?: boolean
+}
+
+/** 挂载 Layer2D：大预览（造型小屋）与小头像（聊天头部）共用 */
+export function LiveStage({ characterId, config, atmosphere = 'night', talking = false, parallax = 8, className = '', frameFill = false }: LiveStageProps) {
+  const holder = useRef<HTMLDivElement>(null)
+  const engineRef = useRef<Layer2D | null>(null)
+  const [, force] = useState(0)
+  useEffect(() => {
+    if (!holder.current || !isCharacterId(characterId)) return
+    const pack = CHARACTER_PACKS[characterId].find(p => p.id === config.packId) ?? CHARACTER_PACKS[characterId][0]
+    const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
+    const engine = new Layer2D(holder.current, { pack, config, atmosphere, reducedMotion: reduced, parallax })
+    engineRef.current = engine
+    force(n => n + 1)
+    return () => { engine.dispose(); engineRef.current = null }
+    // pack/config 以 setExpression/setTalking 按需同步，避免整树重挂
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [characterId])
+  useEffect(() => { engineRef.current?.setExpression(config) }, [config])
+  useEffect(() => { engineRef.current?.setTalking(talking) }, [talking])
+  useEffect(() => { engineRef.current?.setAtmosphere(atmosphere) }, [atmosphere])
+  return <div ref={holder} className={'av25-holder ' + (frameFill ? 'av25-fill' : '') + (className ? ' ' + className : '')} />
 }
 
 /* ========================================================================
- * 第二部分：3D 捏捏编辑器（Schema v2）
+ * 第三部分：造型小屋（捏捏页 v3）
  * ======================================================================== */
-type Api = <T>(path: string, data?: unknown, method?: string) => Promise<T>
 
-type SectionId = 'face' | 'eyes' | 'nose-lips' | 'hair' | 'outfit' | 'skin'
-const SECTION_TABS: { id: SectionId; name: string }[] = [
-  { id: 'face', name: '脸型' }, { id: 'eyes', name: '眉眼' }, { id: 'nose-lips', name: '鼻唇' },
-  { id: 'hair', name: '发型' }, { id: 'outfit', name: '穿搭' }, { id: 'skin', name: '肤妆' },
-]
-const REGION_TO_SECTION: Record<PickRegion, SectionId> = {
-  face: 'face', eyes: 'eyes', nose: 'nose-lips', lips: 'nose-lips', hair: 'hair', outfit: 'outfit', accessory: 'outfit',
-}
-
-function Slider({ label, hint, value, onChange, onCommit }: { label: string; hint: string; value: number; onChange: (value: number) => void; onCommit: () => void }) {
-  return <label className="av3-slider">
-    <span className="av3-slider-head"><b>{label}</b><small>{hint}</small><i>{value > 0 ? '+' + value : value}</i></span>
-    <input type="range" min={-100} max={100} step={1} value={value} aria-label={label}
-      onPointerDown={onCommit}
-      onKeyDown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') onCommit() }}
-      onChange={event => onChange(Number(event.target.value))} />
-  </label>
-}
-
-function ChipRow({ label, items, active, onPick }: { label: string; items: Option[]; active: string; onPick: (id: string) => void }) {
-  return <div className="av3-chip-row">
-    <span className="av3-chip-label">{label}</span>
-    <div className="av3-chips">
-      {items.map(item => <button type="button" key={item.id} className={'av3-chip' + (active === item.id ? ' active' : '')}
-        aria-pressed={active === item.id} onClick={() => onPick(item.id)}>{item.name}</button>)}
-    </div>
-  </div>
-}
-
-function SwatchRow({ label, swatches, value, onPick }: { label: string; swatches: Swatch[]; value: HSL; onPick: (hsl: HSL) => void }) {
-  return <div className="av3-chip-row">
-    <span className="av3-chip-label">{label}</span>
-    <div className="av3-swatch-row" role="radiogroup" aria-label={label}>
-      {swatches.map(swatch => {
-        const hex = hslToHex(swatch.hsl)
-        const selected = Math.abs(swatch.hsl.h - value.h) < 4 && Math.abs(swatch.hsl.s - value.s) < 4 && Math.abs(swatch.hsl.l - value.l) < 4
-        return <button type="button" key={swatch.name + hex} role="radio" aria-checked={selected} title={swatch.name}
-          className={'av3-swatch' + (selected ? ' active' : '')} style={{ background: hex }}
-          onClick={() => onPick(swatch.hsl)} />
-      })}
-    </div>
-  </div>
+interface Api {
+  <T>(path: string, data?: unknown, method?: string): Promise<T>
 }
 
 export function AvatarScreen({ api, onError, characterId, characterName, theme, onSaved, onClose }: {
   api: Api
   onError: (message: string) => void
-  characterId: string | undefined
+  characterId?: string
   characterName: string
-  theme?: EngineTheme
-  onSaved?: (config: AvatarConfigV2) => void
+  theme?: AtmosphereKey
+  onSaved?: (config: AvatarConfigV3) => void
   onClose?: () => void
 }) {
-  const has3D = useMemo(() => isWebGLAvailable(), [])
-  if (!has3D) return <AvatarScreenSVG api={api} onError={onError} characterId={characterId} characterName={characterName} onSaved={onSaved} onClose={onClose} />
-  return <AvatarScreen3D api={api} onError={onError} characterId={characterId} characterName={characterName}
-    theme={theme ?? 'night'} onSaved={onSaved} onClose={onClose} />
-}
-
-function AvatarScreen3D({ api, onError, characterId, characterName, theme, onSaved, onClose }: {
-  api: Api
-  onError: (message: string) => void
-  characterId: string | undefined
-  characterName: string
-  theme: EngineTheme
-  onSaved?: (config: AvatarConfigV2) => void
-  onClose?: () => void
-}) {
-  const base = useMemo(() => defaultConfigFor(characterId), [characterId])
-  const [config, setConfig] = useState<AvatarConfigV2>(base)
-  const [loaded, setLoaded] = useState(false)
-  const [tab, setTab] = useState<SectionId>('face')
-  const [busy, setBusy] = useState(false)
+  const cid = isCharacterId(characterId) ? characterId : 'lin-zhou'
+  const packs = CHARACTER_PACKS[cid]
+  const [config, setConfig] = useState<AvatarConfigV3>(() => defaultConfigV3(cid))
+  const [loaded, setLoaded] = useState<AvatarConfigV3 | null>(null)
   const [notice, setNotice] = useState('')
-  const [saved, setSaved] = useState(false)
-  const [randomMenu, setRandomMenu] = useState(false)
-  const [share, setShare] = useState<{ mode: 'out'; code: string } | { mode: 'in'; input: string } | null>(null)
-  const past = useRef<AvatarConfigV2[]>([])
-  const future = useRef<AvatarConfigV2[]>([])
-  const [historyTick, setHistoryTick] = useState(0)
-  const [comparing, setComparing] = useState(false)
-  const stage = useRef<HTMLDivElement>(null)
-  const engine = useRef<AvatarEngine | null>(null)
-  const reducedMotion = useMemo(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches, [])
+  const [shareOpen, setShareOpen] = useState(false)
+  const [shareInput, setShareInput] = useState('')
+  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    void api<{ config: unknown }>('avatar').then(({ config: raw }) => {
-      const next = coerceV2(raw) ?? applyV1ToV2(characterId, raw as never)
-      setConfig(next)
-      past.current = []
-      future.current = []
-    }).catch(() => {}).finally(() => setLoaded(true))
-  }, [api, characterId])
+    let active = true
+    void api<{ config: Record<string, unknown> | null }>('avatar')
+      .then(({ config }) => { if (active && config) { const v3 = config.version === 3 ? coerceV3(config, cid) : migrateToV3(config, cid); setLoaded(v3); setConfig(v3) } })
+      .catch(() => {})
+    return () => { active = false }
+  }, [api, cid])
 
-  useEffect(() => {
-    if (!stage.current || engine.current || !loaded) return
-    let cancelled = false
-    void import('./avatar3d').then(({ AvatarEngine: Engine }) => {
-      if (cancelled || !stage.current) return
-      try {
-        engine.current = new Engine(stage.current, config, {
-          theme,
-          reducedMotion,
-          onPick: region => setTab(REGION_TO_SECTION[region] ?? 'face'),
-        })
-      } catch {
-        engine.current = null
-      }
-    })
-    const resize = () => engine.current?.resize()
-    window.addEventListener('resize', resize)
-    return () => {
-      cancelled = true
-      window.removeEventListener('resize', resize)
-      engine.current?.dispose()
-      engine.current = null
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded])
+  const currentPack = packs.find(p => p.id === config.packId) ?? packs[0]
+  const dirty = !!loaded && (loaded.packId !== config.packId || loaded.expression !== config.expression)
 
-  useEffect(() => { engine.current?.setTheme(theme) }, [theme])
-  useEffect(() => {
-    if (!comparing) engine.current?.setConfig(config)
-  }, [config, comparing])
-
-  const pushHistory = (snapshot: AvatarConfigV2) => {
-    past.current.push(structuredClone(snapshot))
-    if (past.current.length > 50) past.current.shift()
-    future.current = []
-    setHistoryTick(tick => tick + 1)
-  }
-  const mutate = (next: AvatarConfigV2, options: { history?: boolean; react?: 'adjust' | 'save' | 'random' } = {}) => {
-    if (options.history !== false) pushHistory(config)
-    setConfig(next)
-    if (options.react) engine.current?.react(options.react)
-  }
-  /** 离散选择（款式 / 色板 / 配饰）统一入口：默认可撤销 */
-  const patch = (mutator: (draft: AvatarConfigV2) => void, options: { history?: boolean } = {}) => {
-    if (options.history !== false) pushHistory(config)
-    const next = structuredClone(config)
-    mutator(next)
-    setConfig(next)
-  }
-  const setSlider = (section: 'face' | 'eyes' | 'nose' | 'lips' | 'hair' | 'body', key: string, value: number) => {
-    const next = structuredClone(config)
-    ;(next[section] as unknown as Record<string, number>)[key] = value
-    setConfig(next)
-  }
-  const undo = () => {
-    const previous = past.current.pop()
-    if (!previous) return
-    future.current.push(structuredClone(config))
-    setConfig(previous)
-    setHistoryTick(tick => tick + 1)
-  }
-  const redo = () => {
-    const next = future.current.pop()
-    if (!next) return
-    past.current.push(structuredClone(config))
-    setConfig(next)
-    setHistoryTick(tick => tick + 1)
-  }
-
-  async function save() {
+  const save = async () => {
     if (busy) return
     setBusy(true)
-    setNotice('')
-    try {
-      const result = await api<{ config: unknown }>('avatar', { config }, 'PUT')
-      const saved = coerceV2(result.config) ?? config
-      setConfig(saved)
-      onSaved?.(saved)
-      engine.current?.react('save')
-      setSaved(true)
-      window.setTimeout(() => setSaved(false), 1200)
-      setNotice('形象已保存，TA换上了新样子。')
-    } catch { onError('保存失败，请重试。') } finally { setBusy(false) }
-  }
-
-  function applyRandom(mode: RandomMode) {
-    setRandomMenu(false)
-    mutate(randomizeV2(config, mode), { react: 'random' })
-    setNotice(mode === 'tasteful' ? '按审美权重随机了一套，不满意再摇。' : '换了一套，不满意再摇一次。')
-  }
-
-  function showShare() {
-    setShare({ mode: 'out', code: encodeShare(config) })
-  }
-  function importShare(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const next = decodeShare(share?.mode === 'in' ? share.input : '')
-    if (!next) { setNotice('形象码没有识别成功，检查一下是否完整。'); return }
-    mutate(next)
-    setShare(null)
-    setNotice('已应用形象码里的样子。')
-  }
-  async function copyShare() {
-    if (share?.mode !== 'out') return
-    try { await navigator.clipboard.writeText(share.code); setNotice('形象码已复制，发给朋友吧。') }
-    catch { setNotice('长按或手动全选复制下面的形象码。') }
-  }
-
-  const startCompare = () => {
-    if (comparing) return
-    setComparing(true)
-    engine.current?.setConfig(base)
-  }
-  const endCompare = () => {
-    if (!comparing) return
-    setComparing(false)
-    engine.current?.setConfig(config)
-  }
-
-  const hairSliders: SliderMeta[] = HAIR_SLIDERS
-  return <section className="avatar-screen av3">
-    <header className="album-actions">
-      {onClose && <button type="button" className="secondary" onClick={onClose}>返回</button>}
-      <h1>捏一捏 · {characterName}</h1>
-    </header>
-    <div className={'av3-stage-wrap' + (saved ? ' saved' : '')}>
-      <div className="av3-stage" ref={stage} role="img" aria-label={`${characterName}的三维形象，可拖动旋转`}>
-        <div className="av3-stage-hint">拖动旋转 · 双指缩放 · 双击回正 · 点五官快速定位</div>
-        {comparing && <div className="av3-compare-tag">原样</div>}
-        <div className="av3-stage-tools">
-          <button type="button" onClick={undo} disabled={!past.current.length} aria-label="撤销">↺</button>
-          <button type="button" onClick={redo} disabled={!future.current.length} aria-label="重做">↻</button>
-        </div>
-      </div>
-      <div className="av3-stage-actions">
-        <button type="button" className="secondary" onPointerDown={startCompare} onPointerUp={endCompare} onPointerLeave={endCompare}>按住看原样</button>
-        <button type="button" className="secondary" onClick={() => { pushHistory(config); setConfig(structuredClone(base)); setNotice('已恢复角色初始样子。') }}>恢复默认</button>
-        <button type="button" className="secondary" onClick={showShare}>形象码</button>
-      </div>
-    </div>
-    <div className="av3-sheet">
-      <div className="av3-tabs" role="tablist" aria-label="捏捏分区">
-        {SECTION_TABS.map(item => <button type="button" role="tab" key={item.id} aria-selected={tab === item.id}
-          className={'av3-tab' + (tab === item.id ? ' active' : '')} onClick={() => setTab(item.id)}>{item.name}</button>)}
-      </div>
-      {tab === 'face' && <div className="av3-panel">
-        {FACE_SLIDERS.map(slider => <Slider key={slider.key} label={slider.label} hint={slider.hint}
-          value={config.face[slider.key as keyof typeof config.face]} onCommit={() => pushHistory(config)}
-          onChange={value => setSlider('face', slider.key, value)} />)}
-      </div>}
-      {tab === 'eyes' && <div className="av3-panel">
-        <ChipRow label="瞳色" items={IRIS_COLORS} active={config.eyes.iris}
-          onPick={id => mutate({ ...structuredClone(config), eyes: { ...config.eyes, iris: id } })} />
-        {EYE_SLIDERS.map(slider => <Slider key={slider.key} label={slider.label} hint={slider.hint}
-          value={config.eyes[slider.key as keyof typeof config.eyes] as number} onCommit={() => pushHistory(config)}
-          onChange={value => setSlider('eyes', slider.key, value)} />)}
-      </div>}
-      {tab === 'nose-lips' && <div className="av3-panel">
-        <p className="av3-group-title">鼻</p>
-        {NOSE_SLIDERS.map(slider => <Slider key={slider.key} label={slider.label} hint={slider.hint}
-          value={config.nose[slider.key as keyof typeof config.nose]} onCommit={() => pushHistory(config)}
-          onChange={value => setSlider('nose', slider.key, value)} />)}
-        <p className="av3-group-title">唇</p>
-        {LIP_SLIDERS.map(slider => <Slider key={slider.key} label={slider.label} hint={slider.hint}
-          value={config.lips[slider.key as keyof typeof config.lips]} onCommit={() => pushHistory(config)}
-          onChange={value => setSlider('lips', slider.key, value)} />)}
-      </div>}
-      {tab === 'hair' && <div className="av3-panel">
-        <ChipRow label="发型" items={HAIR_STYLES} active={config.hair.style}
-          onPick={id => patch(draft => { draft.hair.style = id })} />
-        <ChipRow label="刘海" items={BANGS} active={config.hair.bangs}
-          onPick={id => patch(draft => { draft.hair.bangs = id })} />
-        {HAIR_SLIDERS.map(slider => <Slider key={slider.key} label={slider.label} hint={slider.hint}
-          value={config.hair[slider.key as keyof typeof config.hair] as number} onCommit={() => pushHistory(config)}
-          onChange={value => setSlider('hair', slider.key, value)} />)}
-        <SwatchRow label="发色" swatches={HAIR_SWATCHES} value={config.hair.color}
-          onPick={value => patch(draft => { draft.hair.color = value })} />
-      </div>}
-      {tab === 'outfit' && <div className="av3-panel">
-        <ChipRow label="上装" items={TOPS} active={config.outfit.top}
-          onPick={id => patch(draft => { draft.outfit.top = id })} />
-        <SwatchRow label="上装颜色" swatches={OUTFIT_SWATCHES} value={config.outfit.topColor}
-          onPick={value => patch(draft => { draft.outfit.topColor = value })} />
-        <ChipRow label="外套" items={OUTERS} active={config.outfit.outer}
-          onPick={id => patch(draft => { draft.outfit.outer = id })} />
-        {config.outfit.outer !== 'none' && <SwatchRow label="外套颜色" swatches={OUTFIT_SWATCHES} value={config.outfit.outerColor}
-          onPick={value => patch(draft => { draft.outfit.outerColor = value })} />}
-        <p className="av3-group-title">身形</p>
-        {BODY_SLIDERS.map(slider => <Slider key={slider.key} label={slider.label} hint={slider.hint}
-          value={config.body[slider.key as keyof typeof config.body]} onCommit={() => pushHistory(config)}
-          onChange={value => setSlider('body', slider.key, value)} />)}
-        <p className="av3-group-title">配饰（最多三件）</p>
-        <div className="av3-chips">
-          {ACCESSORY_ITEMS.map(item => {
-            const active = config.accessories.includes(item.id)
-            return <button type="button" key={item.id} className={'av3-chip' + (active ? ' active' : '')} aria-pressed={active}
-              onClick={() => patch(draft => {
-                draft.accessories = active ? draft.accessories.filter(entry => entry !== item.id)
-                  : draft.accessories.length >= 3 ? draft.accessories : [...draft.accessories, item.id]
-              })}>{item.name}</button>
-          })}
-        </div>
-      </div>}
-      {tab === 'skin' && <div className="av3-panel">
-        <SwatchRow label="肤色" swatches={SKIN_SWATCHES} value={config.skin.tone}
-          onPick={value => patch(draft => { draft.skin.tone = value })} />
-        <Slider label="腮红" hint="无到微醺" value={config.skin.blush} onCommit={() => pushHistory(config)}
-          onChange={value => setConfig(previous => ({ ...previous, skin: { ...previous.skin, blush: clamp(value, 0, 100) } }))} />
-        <ChipRow label="雀斑" items={FRECKLE_STYLES} active={config.skin.freckles}
-          onPick={id => patch(draft => { draft.skin.freckles = id as typeof config.skin.freckles })} />
-        <SwatchRow label="唇色" swatches={LIP_SWATCHES} value={config.skin.lipTint}
-          onPick={value => patch(draft => { draft.skin.lipTint = value })} />
-      </div>}
-      <div className="av3-footer">
-        <div className="av3-random">
-          <button type="button" onClick={() => setRandomMenu(value => !value)} aria-expanded={randomMenu}>随机一套</button>
-          {randomMenu && <div className="av3-random-menu" role="menu">
-            <button type="button" role="menuitem" onClick={() => applyRandom('tasteful')}>好看优先</button>
-            <button type="button" role="menuitem" onClick={() => applyRandom('face')}>只换五官</button>
-            <button type="button" role="menuitem" onClick={() => applyRandom('full')}>放飞自我</button>
-          </div>}
-        </div>
-        <button type="button" className="av3-save" disabled={busy} onClick={() => void save()}>保存形象</button>
-      </div>
-      {notice && <p role="status">{notice}</p>}
-    </div>
-    {share?.mode === 'out' && <div className="av3-share" role="dialog" aria-label="形象码">
-      <div className="av3-share-card">
-        <h2>{characterName}的形象码</h2>
-        <p>把这串码发给朋友，TA输入后可以让角色穿成一样。</p>
-        <textarea readOnly value={share.code} onFocus={event => event.currentTarget.select()} />
-        <div className="av3-share-actions">
-          <button type="button" onClick={() => void copyShare()}>复制</button>
-          <button type="button" onClick={() => setShare({ mode: 'in', input: '' })}>输入朋友的码</button>
-          <button type="button" className="secondary" onClick={() => setShare(null)}>关闭</button>
-        </div>
-      </div>
-    </div>}
-    {share?.mode === 'in' && <div className="av3-share" role="dialog" aria-label="输入形象码">
-      <form className="av3-share-card" onSubmit={importShare}>
-        <h2>输入形象码</h2>
-        <textarea value={share.input} aria-label="形象码" placeholder="粘贴 WX2- 开头的形象码"
-          onChange={event => setShare({ mode: 'in', input: event.target.value })} />
-        <div className="av3-share-actions">
-          <button type="submit">应用</button>
-          <button type="button" className="secondary" onClick={() => setShare(null)}>取消</button>
-        </div>
-      </form>
-    </div>}
-  </section>
-}
-
-/* ---------- SVG 降级编辑器（无 WebGL 环境，行为与旧版一致） ---------- */
-function AvatarScreenSVG({ api, onError, characterId, characterName, onSaved, onClose }: {
-  api: Api
-  onError: (message: string) => void
-  characterId: string | undefined
-  characterName: string
-  onSaved?: (config: never) => void
-  onClose?: () => void
-}) {
-  const projected = useMemo(() => projectV2toV1(defaultConfigFor(characterId)), [characterId])
-  const [config, setConfig] = useState<AvatarConfig>(projected)
-  const [busy, setBusy] = useState(false)
-  const [notice, setNotice] = useState('')
-  const [saved, setSaved] = useState(false)
-  const [tab, setTab] = useState<keyof typeof AVATAR_OPTIONS>('hair')
-
-  useEffect(() => {
-    void api<{ config: Partial<AvatarConfig> | null }>('avatar').then(({ config: raw }) => {
-      if (raw && (raw as { version?: unknown }).version === undefined) setConfig(mergeAvatar(projected, raw))
-    }).catch(() => {})
-  }, [])
-
-  async function save() {
-    if (busy) return
-    setBusy(true)
-    setNotice('')
     try {
       await api('avatar', { config }, 'PUT')
-      setSaved(true)
-      window.setTimeout(() => setSaved(false), 1000)
-      setNotice('形象已保存（当前设备不支持 3D 展示，已用平铺形象保存）。')
-    } catch { onError('保存失败，请重试。') } finally { setBusy(false) }
+      setLoaded(config)
+      setNotice('已保存今晚的样子。')
+      onSaved?.(config)
+    } catch (error) { onError?.((error as Error).message || '保存失败') } finally { setBusy(false) }
   }
 
-  function pick(key: keyof typeof AVATAR_OPTIONS, value: string | number) {
-    setConfig(previous => ({ ...previous, [key]: value }) as AvatarConfig)
-  }
-
-  function randomize() {
-    const draw = <T,>(list: readonly T[]) => list[Math.floor(Math.random() * list.length)]
-    setConfig({
-      skin: Math.floor(Math.random() * AVATAR_OPTIONS.skin.length),
-      hair: draw(AVATAR_OPTIONS.hair),
-      hairColor: Math.floor(Math.random() * AVATAR_OPTIONS.hairColor.length),
-      eyes: draw(AVATAR_OPTIONS.eyes),
-      mouth: draw(AVATAR_OPTIONS.mouth),
-      blush: draw(AVATAR_OPTIONS.blush),
-      outfit: draw(AVATAR_OPTIONS.outfit),
-      outfitColor: Math.floor(Math.random() * AVATAR_OPTIONS.outfitColor.length),
-      accessory: draw(AVATAR_OPTIONS.accessory),
-    })
-    setNotice('换了一套，不满意再摇一次。')
+  const applyShare = () => {
+    const parsed = decodeShareV3(shareInput.trim(), cid)
+    if (!parsed) { setNotice('这串形象码好像不对，检查一下再试试。'); return }
+    setConfig(parsed)
+    setShareOpen(false)
+    setShareInput('')
+    setNotice('已应用朋友分享的造型。')
   }
 
   return <section className="avatar-screen">
     <header className="album-actions">
-      {onClose && <button type="button" className="secondary" onClick={onClose}>返回</button>}
-      <h1>捏一捏 · {characterName}</h1>
+      <button type="button" className="secondary" onClick={onClose}>返回</button>
+      <h1>造型小屋 · {characterName}</h1>
+      <span className="album-spacer" aria-hidden="true" />
     </header>
-    <div className={'avatar-stage' + (saved ? ' saved' : '')}>
-      <Avatar config={config} size={168} glow />
-      <div className="avatar-tabs">
-        {(Object.keys(AVATAR_OPTIONS) as (keyof typeof AVATAR_OPTIONS)[]).map(key =>
-          <button type="button" key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>{key === 'hair' ? '发型' : key === 'hairColor' ? '发色' : key === 'skin' ? '肤色' : key === 'eyes' ? '眼睛' : key === 'mouth' ? '嘴巴' : key === 'blush' ? '腮红' : key === 'outfit' ? '服装' : key === 'outfitColor' ? '服色' : key === 'accessory' ? '配饰' : key}</button>)}
-      </div>
-      <div className="avatar-options">
-        {AVATAR_OPTIONS[tab].map((option, index) => {
-          const selected = typeof config[tab] === 'number' ? config[tab] === index : config[tab] === option
-          return <button type="button" key={option} className={'avatar-option' + (selected ? ' active' : '')}
-            onClick={() => pick(tab, typeof config[tab] === 'number' ? index : option)}>{option}</button>
-        })}
-      </div>
-      <div className="avatar-actions">
-        <button type="button" className="secondary" onClick={() => { setConfig(projected); setNotice('') }}>恢复默认</button>
-        <button type="button" className="secondary" onClick={randomize}>随机一套</button>
-        <button type="submit" disabled={busy} onClick={() => void save()}>保存形象</button>
-      </div>
-      {notice && <p role="status">{notice}</p>}
+
+    <div className="av25-house-stage" aria-label={`${characterName}的2.5D形象，会眨眼和呼吸`}>
+      <LiveStage characterId={cid} config={config} atmosphere={theme} parallax={10} frameFill />
+      <p className="av25-hint">TA 会眨眼、呼吸 · 移动指针轻轻摆动 · 换主题换心情滤镜</p>
     </div>
+
+    <div className="av25-actions">
+      <button type="button" className="secondary" onClick={() => setShareOpen(true)}>形象码</button>
+      {dirty && <span className="av25-dirty">有未保存的调整</span>}
+    </div>
+
+    <div className="av25-panels">
+      <div className="av25-panel">
+        <h2>今晚的心情</h2>
+        <div className="av25-chip-row" role="radiogroup" aria-label="心情">
+          <button type="button" className={'av25-chip' + (config.expression === 'calm' ? ' active' : '')} role="radio" aria-checked={config.expression === 'calm'}
+            onClick={() => setConfig({ ...config, expression: 'calm' })}>平静</button>
+          <button type="button" className={'av25-chip' + (config.expression === 'smile' ? ' active' : '')} role="radio" aria-checked={config.expression === 'smile'}
+            onClick={() => setConfig({ ...config, expression: 'smile' })}>微笑</button>
+        </div>
+      </div>
+
+      <div className="av25-panel">
+        <h2>造型</h2>
+        <div className="av25-pack-list">
+          {packs.map(pack => <button type="button" key={pack.id}
+            className={'av25-pack' + (pack.id === config.packId ? ' active' : '')}
+            aria-pressed={pack.id === config.packId}
+            onClick={() => setConfig({ ...config, packId: pack.id })}>
+            <span className="av25-pack-name">{pack.name}</span>
+            <small>{pack.hint}</small>
+          </button>)}
+        </div>
+        {packs.length < 2 && <p className="av25-more">更多造型正在路上，敬请期待。</p>}
+      </div>
+
+      <button type="button" className="av25-save" disabled={busy || (!dirty && !!loaded)} onClick={save}>
+        {busy ? '保存中…' : '保存今晚的样子'}
+      </button>
+    </div>
+
+    {notice && <p className="av25-note" role="status">{notice}</p>}
+
+    {shareOpen && <div className="av3-share" role="dialog" aria-label="形象码">
+      <div className="av3-share-card">
+        <h2>{characterName}的形象码</h2>
+        <p>把这串码发给朋友，TA 输入后可以看到你给 TA 换的造型。</p>
+        <textarea readOnly value={encodeShareV3(config)} onFocus={event => event.currentTarget.select()} />
+        <div className="av3-share-actions">
+          <button type="button" onClick={() => { void navigator.clipboard?.writeText(encodeShareV3(config)).then(() => setNotice('形象码已复制。')); setShareOpen(false) }}>复制</button>
+          <button type="button" className="secondary" onClick={() => setShareOpen(false)}>关闭</button>
+        </div>
+        <hr className="av25-sep" />
+        <h2>输入朋友的码</h2>
+        <textarea aria-label="形象码" value={shareInput} placeholder="粘贴 WX3- 开头的形象码"
+          onChange={event => setShareInput(event.target.value)} />
+        <div className="av3-share-actions">
+          <button type="button" onClick={applyShare}>应用</button>
+          <button type="button" className="secondary" onClick={() => { setShareOpen(false); setShareInput('') }}>取消</button>
+        </div>
+      </div>
+    </div>}
   </section>
 }

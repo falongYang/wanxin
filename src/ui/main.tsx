@@ -1,8 +1,8 @@
 import { groupCards } from './card-library.js'
 import { MeScreen, MomentsScreen, BondBar, type Bond, type Home } from './hub'
-import { AvatarScreen, Avatar, CHARACTER_DEFAULT_AVATAR, FALLBACK_AVATAR, type AvatarConfig } from './avatar'
-import type { EngineTheme } from './avatar3d'
-import { applyV1ToV2, coerceV2, defaultConfigFor, isWebGLAvailable, projectV2toV1, type AvatarConfigV2 } from './avatar-catalog'
+import { AvatarScreen, Avatar, LiveStage, CHARACTER_DEFAULT_AVATAR, FALLBACK_AVATAR } from './avatar'
+import { CHARACTER_PACKS, coerceV3, defaultConfigV3, isCharacterId, type AvatarConfigV3 } from './avatar-packs'
+import { renderPackSnapshot, type AtmosphereKey } from './avatar2d'
 import { ServicesScreen, detectServiceHint, fetchServices, openService, type ServiceItem } from './services'
 import { RitualsScreen } from './rituals'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -223,12 +223,12 @@ function App() {
   const [defaultShots, setDefaultShots] = useState<Record<string, string>>({})
   const [services, setServices] = useState<ServiceItem[]>([])
   const [avatarReturn, setAvatarReturn] = useState<'me' | 'discover'>('me')
-  const avatarV2 = useMemo<AvatarConfigV2>(() => {
-    if (avatarRaw && avatarRaw.version === 2) return coerceV2(avatarRaw) ?? defaultConfigFor(character?.id)
-    return applyV1ToV2(character?.id, avatarRaw as never)
+  // v3 造型包形象：旧 v1/v2 捏捏配置自动迁移到角色默认造型包
+  const avatarV3 = useMemo<AvatarConfigV3>(() => {
+    const cid = isCharacterId(character?.id) ? character.id : 'lin-zhou'
+    if (avatarRaw && avatarRaw.version === 3) return coerceV3(avatarRaw, cid)
+    return defaultConfigV3(cid)
   }, [avatarRaw, character?.id])
-  const hasWebGL = useMemo(() => isWebGLAvailable(), [])
-  const snapshotKey = useMemo(() => JSON.stringify(avatarV2) + ':' + theme, [avatarV2, theme])
   const serviceHint = screen === 'chat' && !busy ? detectServiceHint(draft, services) : null
   const reloadHome = () => {
     void api<Home>('home').then(result => { setHome(result); setBond(result.bond) }).catch(() => {})
@@ -262,37 +262,35 @@ function App() {
   }
 
   useEffect(() => { void load() }, [])
-  // 全站头像：形象或主题变化后重新渲染 3D 快照（带缓存；three.js 按需异步加载）
+  // 全站头像：形象或主题变化后重新合成插画快照（带缓存）
   useEffect(() => {
-    if (!hasWebGL) { setAvatarImage(null); return }
     let active = true
     const timer = window.setTimeout(() => {
-      void import('./avatar3d').then(module => {
-        if (!active) return
-        const url = module.renderSnapshot(avatarV2, 256, theme as EngineTheme, snapshotKey)
+      const cid = isCharacterId(character?.id) ? character.id : 'lin-zhou'
+      const pack = CHARACTER_PACKS[cid].find(p => p.id === avatarV3.packId) ?? CHARACTER_PACKS[cid][0]
+      void renderPackSnapshot(pack, avatarV3, 256, theme as AtmosphereKey).then(url => {
         if (active && url) setAvatarImage(url)
       })
     }, 160)
     return () => { active = false; window.clearTimeout(timer) }
-  }, [avatarV2, theme, hasWebGL, snapshotKey])
+  }, [avatarV3, theme, character?.id])
   // 门页三角色默认形象快照（按角色 + 主题缓存）
   useEffect(() => {
-    if (!hasWebGL || !characters.length) return
+    if (!characters.length) return
     let active = true
-    void import('./avatar3d').then(module => {
-      if (!active) return
-      const shots: Record<string, string> = {}
-      for (const item of characters) {
-        shots[item.id] = module.renderSnapshot(defaultConfigFor(item.id), 256, theme as EngineTheme, 'default:' + item.id + ':' + theme)
-        if (!active) return
-      }
-      if (active) setDefaultShots(shots)
+    void Promise.all(characters.map(async item => {
+      if (!isCharacterId(item.id)) return [item.id, ''] as const
+      const config = defaultConfigV3(item.id)
+      const pack = CHARACTER_PACKS[item.id][0]
+      return [item.id, await renderPackSnapshot(pack, config, 256, theme as AtmosphereKey)] as const
+    })).then(entries => {
+      if (active) setDefaultShots(Object.fromEntries(entries.filter(([, url]) => url)))
     })
     return () => { active = false }
-  }, [characters, theme, hasWebGL])
+  }, [characters, theme])
   const avatarNode = (size: number, glow = false) => avatarImage
     ? <img className={'avatar av3-photo' + (glow ? ' glow' : '')} src={avatarImage} width={size} height={size} alt="" aria-hidden="true" />
-    : <Avatar config={projectV2toV1(avatarV2)} size={size} glow={glow} />
+    : <Avatar config={CHARACTER_DEFAULT_AVATAR[character?.id ?? 'lin-zhou'] ?? FALLBACK_AVATAR} size={size} glow={glow} />
   useEffect(() => {
     if (screen !== 'chat') return
     if (sourceTarget) {
@@ -640,7 +638,9 @@ function App() {
     {screen === 'chat' ? <>
       <header className="chat-header">
         <button type="button" disabled={busy} onClick={() => { setError(''); setScreen('discover') }}>返回</button>
-        <div className="chat-who">{avatarNode(38)}<span><strong>{character?.name ?? '角色'}</strong><small>AI 虚构角色</small></span></div>
+        <div className="chat-who"><span className="chat-who-stage">{isCharacterId(character?.id)
+          ? <LiveStage characterId={character.id} config={avatarV3} atmosphere={theme as AtmosphereKey} talking={busy} parallax={0} className="av25-chat-head" />
+          : avatarNode(38)}</span><span><strong>{character?.name ?? '角色'}</strong><small>AI 虚构角色</small></span></div>
         <button type="button" disabled={busy} onClick={() => { setReturnFromCards('chat'); void cardAction(showCards) }} className="icon-btn" aria-label="共同经历" title="共同经历"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3.5" y="6.5" width="17" height="12" rx="2.5" /><path d="m4.5 8.5 7.5 5.5 7.5-5.5" /></svg></button>
         <details className="chat-menu"><summary>菜单</summary>
           <button type="button" disabled={busy} onClick={() => void clearSession()}>清除会话</button>
@@ -900,12 +900,11 @@ function App() {
       </section>}
       {screen === 'me' && <MeScreen api={api} onError={message => setError(message)} character={character} refreshHome={reloadHome} home={home} avatar={avatarNode(72, true)} onEditAvatar={() => { setAvatarReturn('me'); setError(''); setScreen('avatar') }} />}
       {screen === 'moments' && <MomentsScreen api={api} onError={message => setError(message)} character={character} avatar={avatarNode(34)} />}
-      {screen === 'avatar' && <AvatarScreen api={api} onError={message => setError(message)} characterId={character?.id} characterName={character?.name ?? 'TA'} theme={theme as EngineTheme} onSaved={config => {
+      {screen === 'avatar' && <AvatarScreen api={api} onError={message => setError(message)} characterId={character?.id} characterName={character?.name ?? 'TA'} theme={theme as AtmosphereKey} onSaved={config => {
         setAvatarRaw(config as unknown as Record<string, unknown>)
-        void import('./avatar3d').then(module => {
-          const url = module.renderSnapshot(config, 256, theme as EngineTheme, JSON.stringify(config) + ':' + theme)
-          if (url) setAvatarImage(url)
-        })
+        const cid = isCharacterId(character?.id) ? character.id : 'lin-zhou'
+        const pack = CHARACTER_PACKS[cid].find(p => p.id === config.packId) ?? CHARACTER_PACKS[cid][0]
+        void renderPackSnapshot(pack, config, 256, theme as AtmosphereKey).then(url => { if (url) setAvatarImage(url) })
       }} onClose={() => { setError(''); setScreen(avatarReturn) }} />}
       {screen === 'services' && <ServicesScreen api={api} onError={message => setError(message)} services={services} />}
       {screen === 'rituals' && <RitualsScreen api={api} onError={message => setError(message)} character={character} />}

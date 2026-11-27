@@ -92,8 +92,19 @@ const sanitizeAvatarV2 = input => {
   }
   return out
 }
+const AVATAR_V3_CHARS = new Set(['lin-zhou', 'gu-chuan', 'su-mian'])
+// v3 造型包形象：characterId 白名单 + packId/expressions 标识校验
+// （packId 是否存在于角色目录由客户端 coerceV3 兜底，服务端不依赖前端资产清单）
+const sanitizeAvatarV3 = input => {
+  if (!AVATAR_V3_CHARS.has(input.characterId)) return null
+  if (typeof input.packId !== 'string' || !AVATAR_ID_RE.test(input.packId)) return null
+  if (input.expression !== 'calm' && input.expression !== 'smile') return null
+  return { version: 3, characterId: input.characterId, packId: input.packId, expression: input.expression }
+}
+
 export function sanitizeAvatar(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return null
+  if (input.version === 3) return sanitizeAvatarV3(input)
   if (input.version === 2) return sanitizeAvatarV2(input)
   const keys = Object.keys(input)
   if (!keys.length || keys.length > Object.keys(AVATAR_FIELDS).length) return null

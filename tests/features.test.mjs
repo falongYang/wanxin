@@ -195,6 +195,29 @@ test('捏捏形象 v2：3D 配置保存/数值截断/缺省回退/非法输入 4
   assert.equal((await request('avatar', null, cookie)).json().config.version, 2)
 })
 
+test('v3 造型包形象：保存、校验、与 v2 共存', async t => {
+  const app = createApp(':memory:', async () => '合成回复', { access: developmentPolicy() })
+  t.after(() => app.emit('close'))
+  const request = makeClient(app)
+  const cookie = await session(request)
+  // 合法 v3 保存并原样读回
+  const v3 = { version: 3, characterId: 'lin-zhou', packId: 'pack1', expression: 'smile' }
+  const saved = await request('avatar', { config: v3 }, cookie, 'PUT')
+  assert.equal(saved.status, 200)
+  assert.deepEqual(saved.json().config, v3)
+  assert.deepEqual((await request('avatar', null, cookie)).json().config, v3)
+  // 非法角色 / 非法包 ID / 非法表情 → 400
+  assert.equal((await request('avatar', { config: { ...v3, characterId: 'nobody' } }, cookie, 'PUT')).status, 400)
+  assert.equal((await request('avatar', { config: { ...v3, packId: 'not a id!' } }, cookie, 'PUT')).status, 400)
+  assert.equal((await request('avatar', { config: { ...v3, expression: 'angry' } }, cookie, 'PUT')).status, 400)
+  // 与 v2 在不同线程共存
+  const v2thread = await session(request)
+  const v2 = { version: 3, characterId: 'gu-chuan', packId: 'pack1', expression: 'calm' }
+  await request('avatar', { config: v2 }, v2thread, 'PUT')
+  assert.equal((await request('avatar', null, v2thread)).json().config.characterId, 'gu-chuan')
+  assert.equal((await request('avatar', null, cookie)).json().config.characterId, 'lin-zhou')
+})
+
 test('生活服务：目录下发、点击落账、未知服务 404', async t => {
   const app = createApp(':memory:', async () => '合成回复', { access: developmentPolicy() })
   t.after(() => app.emit('close'))
