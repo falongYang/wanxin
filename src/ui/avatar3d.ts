@@ -51,8 +51,8 @@ const THEME_LIGHTS: Record<EngineTheme, Lighting> = {
     rim: ['#e8b98a', .75, new THREE.Vector3(-.8, 1.4, -2.4)], hemi: ['#f6efe3', '#c9b694', .9],
   },
   mint: {
-    key: ['#eefaf3', 1.9, new THREE.Vector3(1.6, 2, 2.4)], fill: ['#bfe8de', .55, new THREE.Vector3(-2.2, .5, 1.8)],
-    rim: ['#7fd8c6', .85, new THREE.Vector3(-.8, 1.4, -2.4)], hemi: ['#e7f4f0', '#b3c9c0', .9],
+    key: ['#f8f2e4', 1.9, new THREE.Vector3(1.6, 2, 2.4)], fill: ['#bfe8de', .55, new THREE.Vector3(-2.2, .5, 1.8)],
+    rim: ['#7fd8c6', .85, new THREE.Vector3(-.8, 1.4, -2.4)], hemi: ['#f0f2e4', '#c9b8a8', .9],
   },
 }
 
@@ -848,6 +848,8 @@ function buildAvatar(config: AvatarConfigV2): { root: THREE.Group; parts: Avatar
   const skinMaterial = new THREE.MeshPhysicalMaterial({
     color: skinHex, roughness: .68, metalness: 0,
     sheen: .38, sheenRoughness: .8, sheenColor: new THREE.Color(skinHex).lerp(new THREE.Color('#ffe9dd'), .5),
+    // 暖红自发光底：冷色主题光下肤色仍有血色，不至发灰发白
+    emissive: '#4a2e26', emissiveIntensity: .07,
   })
   const hairMaterial = new THREE.MeshStandardMaterial({
     color: hsl(config.hair.color), roughness: .58, metalness: .01, side: THREE.DoubleSide, map: strandTexture(),

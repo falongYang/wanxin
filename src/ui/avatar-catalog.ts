@@ -146,11 +146,11 @@ const base = (over: {
 export const CHARACTER_DEFAULTS_V2: Record<string, AvatarConfigV2> = {
   // 林舟：云白针织 + 暖杏开衫 + 头戴耳机，黑棕微卷中发，温柔弯眉
   'lin-zhou': base({
-    face: { faceWidth: -12, jawWidth: -2, jawAngle: 12, chinLength: 14, cheekBone: 8, cheekFat: -12 },
-    eyes: { eyeSize: 6, eyeTilt: -2, lidCrease: 12, smileBand: 14, browCurve: 10, browThick: 8, iris: 'dark-brown' },
-    nose: { bridge: 22, bridgeWidth: -8, tip: -2, ala: -6, noseLength: 10 },
-    lips: { upperLip: -6, lowerLip: -2, mouthWidth: -4, corner: 18, cupidsBow: 2 },
-    skin: { tone: { h: 28, s: 42, l: 86 }, blush: 8, lipTint: { h: 6, s: 30, l: 66 } },
+    face: { faceWidth: -8, jawWidth: -6, jawAngle: 0, chinLength: -2, cheekBone: 2, cheekFat: 8 },
+    eyes: { eyeSize: 6, eyeTilt: 3, lidCrease: 12, smileBand: 20, browCurve: 10, browThick: 8, iris: 'dark-brown' },
+    nose: { bridge: 14, bridgeWidth: -8, tip: -2, ala: -6, noseLength: 0 },
+    lips: { upperLip: -6, lowerLip: 2, mouthWidth: 2, corner: 22, cupidsBow: 2 },
+    skin: { tone: { h: 28, s: 48, l: 86 }, blush: 16, lipTint: { h: 6, s: 30, l: 72 } },
     hair: { style: 'wavy-mid', bangs: 'airy', color: { h: 222, s: 22, l: 15 }, length: -24, volume: 6, curl: 14 },
     body: { shoulderWidth: -4, neckLength: 8, chestDepth: -8 },
     outfit: { top: 'knit-round', topColor: { h: 42, s: 24, l: 92 }, outer: 'cardigan', outerColor: { h: 30, s: 46, l: 80 } },
@@ -158,11 +158,11 @@ export const CHARACTER_DEFAULTS_V2: Record<string, AvatarConfigV2> = {
   }),
   // 顾川：深棕高领 + 墨绿马甲 + 金丝圆眼镜，黑发利落，清冷书卷
   'gu-chuan': base({
-    face: { faceWidth: -8, jawWidth: -16, jawAngle: 8, chinLength: 16, cheekBone: 10, cheekFat: -14 },
+    face: { faceWidth: -10, jawWidth: -8, jawAngle: 0, chinLength: -2, cheekBone: 4, cheekFat: 0 },
     eyes: { eyeSize: -8, eyeTilt: 4, lidCrease: 6, smileBand: 0, browHeight: 8, browSpace: -4, browCurve: -14, browThick: 6, iris: 'brown' },
     nose: { bridge: 20, bridgeWidth: -6, tip: -6, ala: -8, noseLength: 14 },
     lips: { upperLip: -4, lowerLip: -2, mouthWidth: 4, corner: -16, cupidsBow: 0 },
-    skin: { tone: { h: 210, s: 22, l: 84 }, blush: 12, lipTint: { h: 14, s: 30, l: 70 } },
+    skin: { tone: { h: 210, s: 28, l: 84 }, blush: 12, lipTint: { h: 14, s: 30, l: 70 } },
     hair: { style: 'short-clean', bangs: 'none', color: { h: 228, s: 26, l: 13 }, length: -20, volume: -6, curl: 0 },
     body: { shoulderWidth: 6, neckLength: 10, chestDepth: 0 },
     outfit: { top: 'turtleneck', topColor: { h: 24, s: 38, l: 28 }, outer: 'vest', outerColor: { h: 158, s: 28, l: 26 } },
@@ -170,11 +170,11 @@ export const CHARACTER_DEFAULTS_V2: Record<string, AvatarConfigV2> = {
   }),
   // 孙晚：月白连帽卫衣 + 灰蓝工装 + 星形发夹，长直发八字刘海，清冷灵动
   'su-mian': base({
-    face: { faceWidth: -10, jawWidth: -18, jawAngle: -8, chinLength: 4, cheekBone: 4, cheekFat: -4 },
+    face: { faceWidth: -6, jawWidth: -8, jawAngle: -4, chinLength: 0, cheekBone: 2, cheekFat: 8 },
     eyes: { eyeSize: 16, eyeTilt: 8, lidCrease: 18, smileBand: 10, browCurve: 14, browThick: -10, iris: 'dark-brown' },
     nose: { bridge: 12, bridgeWidth: -12, tip: -8, ala: -8, noseLength: 8 },
     lips: { upperLip: 4, lowerLip: 10, mouthWidth: -12, corner: 10, cupidsBow: 10 },
-    skin: { tone: { h: 210, s: 24, l: 87 }, blush: 42, lipTint: { h: 352, s: 42, l: 60 } },
+    skin: { tone: { h: 210, s: 30, l: 87 }, blush: 42, lipTint: { h: 352, s: 42, l: 60 } },
     hair: { style: 'long-straight', bangs: 'curtain', color: { h: 228, s: 26, l: 12 }, length: 20, volume: 6, curl: 0 },
     body: { shoulderWidth: -14, neckLength: 6, chestDepth: -8 },
     outfit: { top: 'hoodie', topColor: { h: 210, s: 20, l: 90 }, outer: 'jacket', outerColor: { h: 204, s: 22, l: 62 } },
