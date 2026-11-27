@@ -1,0 +1,17 @@
+{
+  "name": "晚信 · 深夜海边电台",
+  "short_name": "晚信",
+  "description": "面向都市单身年轻女性的移动端 AI 角色陪伴产品",
+  "lang": "zh-CN",
+  "start_url": "/wanxin/",
+  "scope": "/wanxin/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#060a14",
+  "theme_color": "#060a14",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

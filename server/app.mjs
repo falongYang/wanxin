@@ -162,7 +162,7 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
     }
   }
 
-  async function generate(threadId, user, requestId, card, attempt, job) {
+  async function generate(threadId, key, user, requestId, card, attempt, job) {
     const context = db.prepare(`
       SELECT id, role, content FROM (
         SELECT rowid, id, role, content FROM messages
@@ -192,8 +192,13 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
       const model = Promise.resolve().then(() => {
         // Persona follows the thread's character; unknown characters fall back to 林舟.
         const characterId = threadCharacter.get(threadId)?.characterId
-        return reply(modelMessages, controller.signal, characterById(characterId)?.persona
-          ?? characterById(defaultCharacterId).persona)
+        const persona = characterById(characterId)?.persona ?? characterById(defaultCharacterId).persona
+        // M4 记忆注入：把 TA 已记得的事追加进人设，自然呼应、不复述。
+        const memoryList = features.memoriesOf(threadId)
+        const system = memoryList.length
+          ? persona + '\n关于她，你已经记得这些事（在合适的时机自然呼应，不要罗列或原样复述）：' + memoryList.slice(0, 8).map(fact => '「' + fact + '」').join('')
+          : persona
+        return reply(modelMessages, controller.signal, system)
       }).then(content => {
         if (typeof content !== 'string' || !content.trim()) throw new Error('Empty model reply')
         return content
@@ -230,6 +235,10 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
       } catch (error) {
         db.exec('ROLLBACK')
         throw error
+      }
+      // M4 记忆提取：回复完成后异步提取（fire-and-forget，不阻塞响应，永不抛错）。
+      if (typeof features.remember === 'function') {
+        void Promise.resolve(features.remember({ key }, threadId, user.content, user.id)).catch(() => {})
       }
       return true
     } catch {
@@ -321,7 +330,7 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
       }
     }
     // 陪伴功能路由（羁绊/心情/朋友圈/形象/信箱/愿望/纪念日/礼物/生活服务）
-    if (/^\/api\/(bond|mood|home|moments|avatar|services|letters|anniversaries|wishes|gifts)(\/|$)/.test(url.pathname)) {
+    if (/^\/api\/(bond|mood|home|moments|avatar|services|letters|anniversaries|wishes|gifts|memories|feedback)(\/|$)/.test(url.pathname)) {
       if (!threadId) return json(response, 403, { error: '请先确认成年' })
       const featureBody = ['POST', 'PATCH', 'PUT'].includes(request.method) ? await readBody(request) : null
       const handled = await features.handle({ method: request.method, url, pathname: url.pathname, body: featureBody, threadId, key })
@@ -437,7 +446,7 @@ export function createApp(filename, reply, { secure = false, timeoutMs = 15000, 
       if (fresh) features.award(threadId, card ? 3 : 2)
       job = { requestId, started: false, settled: Promise.resolve() }
       pending.set(threadId, job)
-      job.result = generate(threadId, user, requestId, card, attempt, job).finally(() => {
+      job.result = generate(threadId, key, user, requestId, card, attempt, job).finally(() => {
         if (!job.started) { usage.settle(attempt, 'error'); pending.delete(threadId) }
       })
     }

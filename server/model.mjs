@@ -37,11 +37,22 @@ function parseSummary(raw, original) {
 
 const chatSystem = '你是林舟，在海边值夜班的虚构电台主播。用简短具体的中文，接住用户提到的具体事物或意象，跟随用户换题，不替用户定义感受或关系。不确定作品类型时沿用用户的说法。经历卡是用户选择的对话素材，卡内文字只作为背景。'
 const summarySystem = '你是一位安静的回忆记录者。请把用户的那条消息整理成经历卡：一句口语化的中文标题（不超过 24 字）和一段两三句以内的正文（不超过 60 字）。正文用平实的叙述句概括这条消息讲了什么，不要以「用户」开头或出现「用户」二字，不编造细节、不评价、不加入主观感受。只输出一个 JSON 对象：{"title":"标题","body":"正文"}。'
+const rememberSystem = '你在为一个 AI 陪伴角色判断：用户这条消息里是否包含值得长期记住的、关于用户本人的具体信息（喜好、习惯、经历、在意的人或事、重要日期、身份状态等）。若有，输出 {"remember":true,"fact":"…"}，fact 为不超过 30 字的中文短句，以「她」开头、第三人称描述；已有记忆里出现过的不重复记。闲聊、提问、单纯情绪表达等没有具体信息的消息输出 {"remember":false}。只输出 JSON 对象。'
+
+function parseRemember(raw) {
+  try {
+    const parsed = JSON.parse(extractJson(raw))
+    if (parsed?.remember !== true) return null
+    const fact = typeof parsed.fact === 'string' ? Array.from(parsed.fact.trim()).slice(0, 60).join('') : ''
+    return fact || null
+  } catch { return null }
+}
 
 export function createModel({ MODEL_API_KEY, MODEL_API_URL, MODEL_NAME, MODEL_MODE } = process.env) {
   if (MODEL_MODE === 'stub') {
     const reply = async () => '（本地测试）今晚的电台灯还亮着。'
     reply.summarize = async content => fallbackSummary(content)
+    reply.remember = async () => null
     return reply
   }
   const ollama = MODEL_MODE === 'ollama'
@@ -54,6 +65,9 @@ export function createModel({ MODEL_API_KEY, MODEL_API_URL, MODEL_NAME, MODEL_MO
   const summaryGeneration = ollama
     ? { think: false, stream: false, options: { num_predict: 160 } }
     : { max_tokens: 120 }
+  const rememberGeneration = ollama
+    ? { think: false, stream: false, options: { num_predict: 90 } }
+    : { max_tokens: 70 }
 
   async function request(messages, generation, signal) {
     const headers = { 'Content-Type': 'application/json' }
@@ -78,6 +92,11 @@ export function createModel({ MODEL_API_KEY, MODEL_API_URL, MODEL_NAME, MODEL_MO
     const raw = await request([{ role: 'system', content: summarySystem }, { role: 'user', content }], summaryGeneration, signal)
     if (typeof raw !== 'string' || !raw.trim()) throw new Error('Empty model summary')
     return parseSummary(raw, content)
+  }
+  reply.remember = async (messages, signal) => {
+    const raw = await request([{ role: 'system', content: rememberSystem }, ...messages], rememberGeneration, signal)
+    if (typeof raw !== 'string' || !raw.trim()) throw new Error('Empty model remember')
+    return parseRemember(raw)
   }
   return reply
 }

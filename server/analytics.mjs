@@ -5,7 +5,8 @@ export const RETENTION_MS = 7 * 86400000
 // 表带 CHECK 约束，扩展时通过 analyticsEventsSql 与旧库自动迁移。
 const EVENT_WHITELIST = ['send', 'first_send', 'card_preview', 'card_save', 'card_open', 'card_send',
   'mood_checkin', 'moment_post', 'moment_like', 'moment_comment', 'character_moment',
-  'avatar_save', 'service_click', 'letter_open', 'wish_make', 'anniversary_save', 'gift_send']
+  'avatar_save', 'service_click', 'letter_open', 'wish_make', 'anniversary_save', 'gift_send',
+  'feedback_send', 'memory_save']
 const analyticsEventsSql = () => `event TEXT NOT NULL CHECK(event IN (${EVENT_WHITELIST.map(name => "'" + name + "'").join(',')}))`
 export function createAnalytics(db, clock = () => new Date()) {
   db.exec(`

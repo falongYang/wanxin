@@ -52,6 +52,8 @@ const AVATAR_V2_NUMBERS = {
 }
 const AVATAR_ID_RE = /^[a-z][a-z0-9-]{0,23}$/
 const clampInt = (value, low, high) => Math.round(Math.min(high, Math.max(low, value)))
+// 月份→季节描述（给信笺与问候借一点时间感）
+const seasonOf = date => ['冬', '冬', '春', '春', '春', '夏', '夏', '夏', '秋', '秋', '秋', '冬'][date.getMonth()]
 const sanitizeHsl = value =>
   value && typeof value === 'object' && !Array.isArray(value) &&
   [value.h, value.s, value.l].every(part => typeof part === 'number' && Number.isFinite(part))
@@ -141,6 +143,10 @@ export function createFeatures(db, { authorization, usage, analytics, telemetry,
     CREATE TABLE IF NOT EXISTS anniversaries (id TEXT PRIMARY KEY, threadId TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE, title TEXT NOT NULL, date TEXT NOT NULL, repeatYearly INTEGER NOT NULL DEFAULT 1, createdAt TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS wishes (id TEXT PRIMARY KEY, threadId TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE, content TEXT NOT NULL, blessing TEXT, createdAt TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS gift_log (threadId TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE, day TEXT NOT NULL, count INTEGER NOT NULL, PRIMARY KEY(threadId, day));
+    CREATE TABLE IF NOT EXISTS memory_facts (id TEXT PRIMARY KEY, threadId TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE, fact TEXT NOT NULL, createdAt TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS memory_log (threadId TEXT NOT NULL, day TEXT NOT NULL, tries INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(threadId, day));
+    CREATE TABLE IF NOT EXISTS care_log (threadId TEXT NOT NULL, day TEXT NOT NULL, content TEXT NOT NULL, createdAt TEXT NOT NULL, PRIMARY KEY(threadId, day));
+    CREATE TABLE IF NOT EXISTS feedback (id TEXT PRIMARY KEY, threadId TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE, content TEXT NOT NULL, createdAt TEXT NOT NULL);
   `)
 
   const now = () => clock().toISOString()
@@ -178,7 +184,11 @@ export function createFeatures(db, { authorization, usage, analytics, telemetry,
     let timedOut = false
     let timer
     try {
-      const model = Promise.resolve().then(() => reply(messages, controller.signal, system)).then(content => {
+      const model = Promise.resolve().then(() => {
+        // 记忆提取分发到 reply.remember（自带 rememberSystem 与 JSON 解析），其余操作走 reply。
+        const fn = operation === 'memory' && typeof reply.remember === 'function' ? reply.remember : reply
+        return fn(messages, controller.signal, system)
+      }).then(content => {
         if (typeof content !== 'string' || !content.trim()) throw new Error('Empty model reply')
         return content.trim()
       })
@@ -209,6 +219,63 @@ export function createFeatures(db, { authorization, usage, analytics, telemetry,
   `)
   function chatContext(threadId) {
     return recent.all(threadId).reverse().map(({ role, content }) => ({ role, content }))
+  }
+
+  /* ---------- M4 角色记忆：提取 / 注入 / 每日小纸条 ---------- */
+  const memoryRows = db.prepare('SELECT id, fact, createdAt FROM memory_facts WHERE threadId = ? ORDER BY createdAt DESC, rowid DESC LIMIT 30')
+  const factTries = db.prepare('INSERT INTO memory_log VALUES (?, ?, 1) ON CONFLICT(threadId, day) DO UPDATE SET tries = tries + 1')
+  const insertFact = db.prepare('INSERT INTO memory_facts VALUES (?, ?, ?, ?)')
+  const careRow = db.prepare('SELECT content FROM care_log WHERE threadId = ? AND day = ?')
+  const CARE_FALLBACKS = [
+    '今晚的浪把星星摇得很慢，记得留一点时间给自己。',
+    '电台的灯一直亮着，想说话的时候随时来。',
+    '今天辛苦了，剩下的时间交给夜色吧。',
+    '别忘了喝水，也别忘了给自己一句好话。',
+  ]
+
+  function memoriesOf(threadId) {
+    return memoryRows.all(threadId).map(row => row.fact)
+  }
+
+  // 从用户消息提取记忆：短消息跳过、每日最多 10 次尝试、双重去重、超限裁剪；全程静默降级。
+  async function remember(ctx, threadId, content, messageId) {
+    try {
+      if (typeof content !== 'string' || Array.from(content.trim()).length < 12) return
+      if (typeof reply?.remember !== 'function') return
+      const day = dayKey(clock)
+      const row = db.prepare('SELECT tries FROM memory_log WHERE threadId = ? AND day = ?').get(threadId, day)
+      if ((row?.tries ?? 0) >= 10) return
+      db.exec('BEGIN IMMEDIATE')
+      try { factTries.run(threadId, day); db.exec('COMMIT') }
+      catch { db.exec('ROLLBACK'); return }
+      const existing = memoriesOf(threadId)
+      const fact = await callModel(ctx, 'memory', 'memory:' + day + ':' + (messageId || day),
+        [{ role: 'user', content: (existing.length ? '已有记忆（不要重复记）：' + existing.slice(0, 10).map(item => '「' + item + '」').join('') + '\n' : '') + '用户消息：' + content }])
+      if (!fact || typeof fact !== 'string') return
+      if (existing.some(item => fact.includes(item) || item.includes(fact))) return
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        insertFact.run(randomUUID(), threadId, fact, now())
+        db.prepare('DELETE FROM memory_facts WHERE threadId = ? AND id NOT IN (SELECT id FROM memory_facts WHERE threadId = ? ORDER BY createdAt DESC, rowid DESC LIMIT 30)').run(threadId, threadId)
+        db.exec('COMMIT')
+      } catch { db.exec('ROLLBACK'); return }
+      try { analytics.record(ctx.key, 'memory_save') } catch { /* 匿名埋点失败不影响记忆 */ }
+    } catch { /* 记忆提取永远静默 */ }
+  }
+
+  // 每日小纸条：当天已缓存直接返回，首次生成走 care 网关，失败降级模板，落库缓存。
+  async function careFor(ctx, threadId, persona) {
+    const day = dayKey(clock)
+    const existing = careRow.get(threadId, day)?.content
+    if (existing) return existing
+    let content = null
+    const modelReply = await callModel(ctx, 'care', 'care:' + day + ':' + threadId,
+      [{ role: 'user', content: '给用户写一句今晚的小纸条（中文，18–36 字，用第二人称，口吻符合你的人设，像电台开场前顺手递来的一句话，不提问、不用标点堆砌）。' }, ...chatContext(threadId).slice(-4)],
+      persona + '这是你今晚给用户的一句主动问候，只输出这一句话本身。')
+    if (modelReply) content = modelReply.slice(0, 120)
+    if (!content) content = CARE_FALLBACKS[Math.floor(Math.random() * CARE_FALLBACKS.length)]
+    db.prepare('INSERT OR IGNORE INTO care_log VALUES (?, ?, ?, ?)').run(threadId, day, content, now())
+    return content
   }
 
   const count = (sql, ...args) => db.prepare(sql).get(...args).n
@@ -426,7 +493,7 @@ export function createFeatures(db, { authorization, usage, analytics, telemetry,
         const context = chatContext(threadId)
         let content = null
         const modelReply = await callModel(ctx, 'letter', 'letter:' + day + ':' + threadId,
-          [{ role: 'user', content: '给用户写今天的信笺（中文，80–140字，口吻符合你的人设，用第二人称，不用列表，结尾不落款）。可以结合我们最近聊过的内容。' },
+          [{ role: 'user', content: `今天是${clock().getFullYear()}年${clock().getMonth() + 1}月${clock().getDate()}日（${seasonOf(clock())}）。给用户写今天的信笺（中文，80–140字，口吻符合你的人设，用第二人称，不用列表，结尾不落款）。可以结合我们最近聊过的内容。` },
             ...context.slice(-8)],
           persona + '这是你写给用户的一封日常信笺，安静温柔，像从电台直播间寄出的手写短笺。只输出信的正文。')
         if (modelReply) content = modelReply.slice(0, 800)
@@ -512,6 +579,22 @@ export function createFeatures(db, { authorization, usage, analytics, telemetry,
       }
     }
 
+    if (resource === 'memories' && method === 'GET') {
+      return { status: 200, data: { memories: memoryRows.all(threadId) } }
+    }
+
+    if (resource === 'feedback' && method === 'POST') {
+      const content = typeof body?.content === 'string' ? body.content.trim() : ''
+      if (!content || Array.from(content).length > 500) return { status: 400, data: { error: '写 1–500 字' } }
+      const day = dayKey(clock)
+      if (count('SELECT count(*) n FROM feedback WHERE threadId = ? AND createdAt >= ?', threadId, dayStart(day)) >= 3) {
+        return { status: 429, data: { error: '今天已经记下三条了，明天再聊。' } }
+      }
+      db.prepare('INSERT INTO feedback VALUES (?, ?, ?, ?)').run(randomUUID(), threadId, content, now())
+      analytics.record(key, 'feedback_send')
+      return { status: 200, data: { ok: true } }
+    }
+
     if (resource === 'home' && method === 'GET') {
       const day = dayKey(clock)
       const mood = db.prepare('SELECT mood FROM mood_log WHERE threadId = ? AND day = ?').get(threadId, day)
@@ -521,6 +604,7 @@ export function createFeatures(db, { authorization, usage, analytics, telemetry,
       const days = anniversaryRows(threadId)
       const metAt = db.prepare('SELECT createdAt FROM threads WHERE id = ?').get(threadId)?.createdAt
       const metDays = metAt ? Math.max(1, Math.floor((clock().getTime() - new Date(metAt).getTime()) / 86400000) + 1) : 0
+      const careToday = await careFor(ctx, threadId, persona)
       return {
         status: 200,
         data: {
@@ -531,11 +615,12 @@ export function createFeatures(db, { authorization, usage, analytics, telemetry,
           anniversaries: { next: days[0] ?? null },
           gifts: { today: gifts, limit: 2 },
           met: { days: metDays },
+          care: { today: careToday },
         },
       }
     }
     return null
   }
 
-  return { handle, award, bondInfo, callModel, chatContext, dayKey: () => dayKey(clock), moodReply }
+  return { handle, award, bondInfo, callModel, chatContext, dayKey: () => dayKey(clock), moodReply, remember, memoriesOf }
 }

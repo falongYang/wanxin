@@ -1198,3 +1198,37 @@ blockquote {
   .av3-stage-wrap.saved .av3-stage canvas { animation: none; }
   .av3-stage-hint { animation: none; }
 }
+
+/* ========== 阶段12（M4 记忆与陪伴 / M2 反馈 / M3 解锁） ========== */
+/* 玄关：TA 今晚的小纸条 */
+.care-note {
+  margin: .2rem 0 .55rem; padding: .45rem .7rem; border-radius: 12px;
+  border: 1px dashed var(--hairline); background: color-mix(in srgb, var(--gold) 6%, transparent);
+  font-size: .78rem; line-height: 1.7; color: var(--text);
+}
+.care-note span { color: var(--gold); margin-inline-end: .35rem; }
+/* 我的：小纸条卡 + 记忆卡 */
+.me-care blockquote, .me-memory .memory-list {
+  margin: .4rem 0 0; padding: .55rem .75rem; border-radius: 12px;
+  background: color-mix(in srgb, var(--gold) 7%, transparent); border: 1px solid var(--hairline);
+}
+.me-care blockquote { margin: .5rem 0; font-family: var(--serif); font-size: .86rem; line-height: 1.8; color: var(--text); }
+.me-memory { margin: 0 0 .8rem; padding: .9rem 1rem; border: 1px solid var(--line); border-radius: 18px; background: var(--glass); }
+.me-memory h2 { margin: 0 0 .2rem; font-size: .92rem; letter-spacing: .12em; font-family: var(--serif); color: var(--gold); }
+.memory-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .38rem; }
+.memory-list li { position: relative; padding-left: 1.05rem; font-size: .8rem; line-height: 1.65; color: var(--muted); }
+.memory-list li::before { content: '◦'; position: absolute; left: .15rem; color: var(--gold); }
+/* 我的：反馈入口 */
+.me-feedback { margin: .9rem 0 .2rem; }
+.me-feedback textarea { width: 100%; margin-bottom: .5rem; }
+.me-feedback-btn { width: 100%; }
+.feedback-actions { display: flex; gap: .6rem; }
+/* 造型小屋：等级锁 */
+.av25-pack { position: relative; }
+.av25-pack.locked { opacity: .55; }
+.av25-pack.locked small { color: var(--faint); }
+.av25-lock {
+  position: absolute; top: .45rem; right: .5rem; font-size: .62rem; letter-spacing: .08em;
+  color: var(--gold); border: 1px solid var(--hairline); border-radius: 999px; padding: .1rem .45rem;
+  background: color-mix(in srgb, var(--gold) 10%, transparent);
+}

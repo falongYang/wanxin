@@ -479,3 +479,71 @@ test('受控模式角色动态走 moment 网关并落账', async t => {
   assert.ok(degraded.json().moment.content.length > 0)
   assert.equal(db.prepare("SELECT count(*) n FROM call_attempts WHERE operation='moment'").get().n, 1)
 })
+/* ================= M4 记忆 / M2 反馈（阶段12） ================= */
+
+test('角色记忆：提取入库、短消息跳过、重复去重、注入下一轮人设', async t => {
+  const seenSystems = []
+  const reply = async (messages, signal, system) => {
+    seenSystems.push(system)
+    return '合成回复'
+  }
+  reply.remember = async () => '她喜欢在下雨天听电台'
+  const app = createApp(':memory:', reply, { access: developmentPolicy() })
+  t.after(() => app.emit('close'))
+  const request = makeClient(app)
+  const cookie = await session(request)
+  // 长消息 → 触发提取
+  await request('messages', { requestId: 'm1', text: '我最喜欢在下雨天听电台，听着浪声写东西。' }, cookie)
+  await new Promise(resolve => setImmediate(resolve))
+  const memories = (await request('memories', null, cookie)).json()
+  assert.equal(memories.memories.length, 1)
+  assert.equal(memories.memories[0].fact, '她喜欢在下雨天听电台')
+  // 相同事实再提取 → 去重
+  await request('messages', { requestId: 'm2', text: '下雨天还是要听电台，这是我的小习惯。' }, cookie)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal((await request('memories', null, cookie)).json().memories.length, 1)
+  // 短消息不消耗提取次数
+  await request('messages', { requestId: 'm3', text: '嗯嗯' }, cookie)
+  await new Promise(resolve => setImmediate(resolve))
+  // 下一轮对话 system 注入了记忆
+  await request('messages', { requestId: 'm4', text: '今天想聊聊别的，比如我的猫。' }, cookie)
+  const lastSystem = seenSystems.at(-1)
+  assert.ok(lastSystem.includes('她喜欢在下雨天听电台'), '记忆应注入人设')
+  assert.ok(lastSystem.includes('关于她，你已经记得'))
+})
+
+test('角色记忆：reply 无 remember 能力时静默跳过', async t => {
+  const app = createApp(':memory:', async () => '合成回复', { access: developmentPolicy() })
+  t.after(() => app.emit('close'))
+  const request = makeClient(app)
+  const cookie = await session(request)
+  await request('messages', { requestId: 'n1', text: '我养了一只叫馒头的橘猫，特别黏人。' }, cookie)
+  await new Promise(resolve => setImmediate(resolve))
+  const memories = (await request('memories', null, cookie)).json()
+  assert.equal(memories.memories.length, 0)
+})
+
+test('用户反馈：入库、空内容 400、每日三条限流', async t => {
+  const app = createApp(':memory:', async () => '合成回复', { access: developmentPolicy() })
+  t.after(() => app.emit('close'))
+  const request = makeClient(app)
+  const cookie = await session(request)
+  assert.equal((await request('feedback', { content: '希望河灯能多放几盏。' }, cookie)).status, 200)
+  assert.equal((await request('feedback', { content: '  ' }, cookie)).status, 400)
+  assert.equal((await request('feedback', { content: '信笺很好看。' }, cookie)).status, 200)
+  assert.equal((await request('feedback', { content: '主题想再加一个紫色。' }, cookie)).status, 200)
+  const limited = await request('feedback', { content: '还想说一句。' }, cookie)
+  assert.equal(limited.status, 429)
+})
+
+test('每日小纸条：home 聚合携带 care 且当天幂等', async t => {
+  let clock = new Date('2026-11-27T12:00:00Z')
+  const app = createApp(':memory:', async (messages, signal, system) => '今晚的海把星子摇得很轻，早点休息。', { access: developmentPolicy(), clock: () => clock })
+  t.after(() => app.emit('close'))
+  const request = makeClient(app)
+  const cookie = await session(request)
+  const home1 = (await request('home', null, cookie)).json()
+  assert.ok(home1.care.today.length > 0)
+  const home2 = (await request('home', null, cookie)).json()
+  assert.equal(home2.care.today, home1.care.today, '当天小纸条应缓存复用')
+})

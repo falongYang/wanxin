@@ -162,12 +162,13 @@ interface Api {
   <T>(path: string, data?: unknown, method?: string): Promise<T>
 }
 
-export function AvatarScreen({ api, onError, characterId, characterName, theme, onSaved, onClose }: {
+export function AvatarScreen({ api, onError, characterId, characterName, theme, bondLevel = 1, onSaved, onClose }: {
   api: Api
   onError: (message: string) => void
   characterId?: string
   characterName: string
   theme?: AtmosphereKey
+  bondLevel?: number
   onSaved?: (config: AvatarConfigV3) => void
   onClose?: () => void
 }) {
@@ -242,13 +243,18 @@ export function AvatarScreen({ api, onError, characterId, characterName, theme, 
       <div className="av25-panel">
         <h2>造型</h2>
         <div className="av25-pack-list">
-          {packs.map(pack => <button type="button" key={pack.id}
-            className={'av25-pack' + (pack.id === config.packId ? ' active' : '')}
-            aria-pressed={pack.id === config.packId}
-            onClick={() => setConfig({ ...config, packId: pack.id })}>
-            <span className="av25-pack-name">{pack.name}</span>
-            <small>{pack.hint}</small>
-          </button>)}
+          {packs.map(pack => {
+            const locked = pack.level > bondLevel
+            return <button type="button" key={pack.id}
+              className={'av25-pack' + (pack.id === config.packId ? ' active' : '') + (locked ? ' locked' : '')}
+              aria-pressed={pack.id === config.packId}
+              aria-label={locked ? `${pack.name}（羁绊 Lv.${pack.level} 解锁）` : pack.name}
+              onClick={() => { if (!locked) setConfig({ ...config, packId: pack.id }); else setNotice(`羁绊到 Lv.${pack.level} 就解锁「${pack.name}」，多陪 TA 聊聊天吧。`) }}>
+              <span className="av25-pack-name">{pack.name}</span>
+              <small>{locked ? `Lv.${pack.level} 解锁 · ` : ''}{pack.hint}</small>
+              {locked && <span className="av25-lock" aria-hidden="true">Lv.{pack.level}</span>}
+            </button>
+          })}
         </div>
         {packs.length < 2 && <p className="av25-more">更多造型正在路上，敬请期待。</p>}
       </div>

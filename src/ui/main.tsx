@@ -8,6 +8,13 @@ import { RitualsScreen } from './rituals'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
+
+/* M6 PWA：生产构建注册 Service Worker（静态缓存+离线壳），dev 不注册。 */
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    void navigator.serviceWorker.register(new URL('sw.js', location.href).toString()).catch(() => {})
+  })
+}
 import './style.css'
 
 type Message = {
@@ -868,6 +875,7 @@ function App() {
               <h1>{character?.name ?? '角色'}</h1>
               <small>AI 虚构角色</small>
               <blockquote>{character?.opening ?? ''}</blockquote>
+              {home?.care?.today && <p className="care-note" role="status"><span aria-hidden="true">✦</span> TA 今晚的小纸条：{home.care.today}</p>}
               <BondBar bond={bond} compact />
               <button disabled={busy} onClick={() => void openChat()}>和{character?.name ?? '角色'}聊天</button>
             </div>
@@ -900,7 +908,7 @@ function App() {
       </section>}
       {screen === 'me' && <MeScreen api={api} onError={message => setError(message)} character={character} refreshHome={reloadHome} home={home} avatar={avatarNode(72, true)} onEditAvatar={() => { setAvatarReturn('me'); setError(''); setScreen('avatar') }} />}
       {screen === 'moments' && <MomentsScreen api={api} onError={message => setError(message)} character={character} avatar={avatarNode(34)} />}
-      {screen === 'avatar' && <AvatarScreen api={api} onError={message => setError(message)} characterId={character?.id} characterName={character?.name ?? 'TA'} theme={theme as AtmosphereKey} onSaved={config => {
+      {screen === 'avatar' && <AvatarScreen api={api} onError={message => setError(message)} characterId={character?.id} characterName={character?.name ?? 'TA'} theme={theme as AtmosphereKey} bondLevel={home?.bond.level ?? bond?.level ?? 1} onSaved={config => {
         setAvatarRaw(config as unknown as Record<string, unknown>)
         const cid = isCharacterId(character?.id) ? character.id : 'lin-zhou'
         const pack = CHARACTER_PACKS[cid].find(p => p.id === config.packId) ?? CHARACTER_PACKS[cid][0]

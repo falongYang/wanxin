@@ -38,6 +38,7 @@ export type Home = {
   anniversaries: { next: { id: string; title: string; date: string; repeatYearly: 0 | 1; daysLeft: number } | null }
   gifts: { today: number; limit: number }
   met: { days: number }
+  care: { today: string | null }
 }
 
 /* ---------- 我的：心情打卡 + 羁绊 ---------- */
@@ -56,6 +57,9 @@ export function MeScreen({ api, onError, character, refreshHome, home, avatar, o
   const [bond, setBond] = useState<Bond | null>(null)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
+  const [memories, setMemories] = useState<{ id: string; fact: string; createdAt: string }[] | null>(null)
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
+  const [feedbackDraft, setFeedbackDraft] = useState('')
 
   const load = async () => {
     try {
@@ -63,9 +67,25 @@ export function MeScreen({ api, onError, character, refreshHome, home, avatar, o
       setMoodState(result)
       const b = await api<Bond>('bond')
       setBond(b)
+      const m = await api<{ memories: { id: string; fact: string; createdAt: string }[] }>('memories')
+      setMemories(m.memories)
     } catch (error) { onError('暂时无法加载，请重试。') }
   }
   useEffect(() => { void load() }, [])
+
+  async function sendFeedback(event: FormEvent) {
+    event.preventDefault()
+    const content = feedbackDraft.trim()
+    if (!content || busy) return
+    setBusy(true)
+    setNotice('')
+    try {
+      await api('feedback', { content })
+      setFeedbackDraft('')
+      setFeedbackOpen(false)
+      setNotice('收到，谢谢你。')
+    } catch { onError('反馈暂时没送达，稍后再试。') } finally { setBusy(false) }
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -98,6 +118,16 @@ export function MeScreen({ api, onError, character, refreshHome, home, avatar, o
       <strong>与{character?.name ?? 'TA'}相遇 <em>{home.met.days}</em> 天</strong>
       <small>羁绊 · {home.bond.title} Lv.{home.bond.level}</small>
     </div>}
+    {home?.care?.today && <div className="me-card me-care" aria-label="TA 今晚的小纸条">
+      <h2>TA 今晚的小纸条</h2>
+      <blockquote>{home.care.today}</blockquote>
+    </div>}
+    <div className="me-card me-memory">
+      <h2>TA 还记得</h2>
+      {memories && memories.length > 0 ? <ul className="memory-list">
+        {memories.map(item => <li key={item.id}>{item.fact}</li>)}
+      </ul> : <p className="me-hint">TA 还在慢慢认识你。多说说自己的事，TA 会记在心里。</p>}
+    </div>
     <div className="me-grid">
       <div className="me-card">
         <h2>今日心情</h2>
@@ -131,6 +161,16 @@ export function MeScreen({ api, onError, character, refreshHome, home, avatar, o
         <BondBar bond={bond} showLevel />
         <p className="me-hint">聊天、收藏经历、打卡与互动都会让羁绊慢慢生长。</p>
       </div>
+    </div>
+    <div className="me-feedback">
+      {feedbackOpen ? <form onSubmit={sendFeedback}>
+        <textarea aria-label="反馈" placeholder="哪里用着不舒服，或者想要什么？写给我们，会认真看。" maxLength={500} rows={2} value={feedbackDraft}
+          onChange={event => setFeedbackDraft(event.target.value)} />
+        <div className="feedback-actions">
+          <button type="submit" disabled={!feedbackDraft.trim() || busy}>送上这句</button>
+          <button type="button" className="secondary" onClick={() => setFeedbackOpen(false)}>收起</button>
+        </div>
+      </form> : <button type="button" className="secondary me-feedback-btn" onClick={() => { setFeedbackOpen(true); setNotice('') }}>留一句反馈</button>}
     </div>
     {notice && <p role="status">{notice}</p>}
   </section>
