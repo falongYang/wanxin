@@ -172,3 +172,30 @@
 - 遗留：本机浏览器对 HTTP 直连 IP 拦截（ERR_BLOCKED_BY_CLIENT），线上页面级截图待 HTTPS 转正后补拍；程序化 3D 形象为低模卡通风格，写实度受程序化几何固有限制，如需更高保真可后续评估接入外部 VRM/GLB 资产管线。
 
 > AI生成
+
+## 附录 · 阶段 10 补丁 + 阶段 11 形象系统 2.5D 化（第八次发版，2026-11-27 下午）
+
+本轮含两部分：① 回应 owner 实测反馈（形象与设计稿差距大）的紧急补丁；② owner 拍板后形象系统整体转向 2.5D 插画路线。本地提交 c39016e + 89bca5d + 4d4adad。
+
+**① 紧急补丁（第七次半发版，c39016e，纯前端）**：三角色默认脸型参数叠加失误（下巴+14/+16、脸颊-12/-14、下颌角+12 全部正向叠加成失衡比例），薄荷主题全冷光导致肤色发灰。修复：默认脸型重定为柔和中庸值、皮肤材质加暖红自发光底（emissive #4a2e26 ×0.07，任何主题保血色）、薄荷主光换暖白；像素验收脸颊/额头/下巴 warmth +21~33。线上产物 `index-B5jjOYY0.js`。
+
+**② S11 形象系统 2.5D 化（第八次发版，89bca5d）**：
+
+- **背景**：程序化 3D（S10）与设计稿插画质感存在不可弥合的路线差距（owner 实测确认）；owner 在「继续 3D / 外部 3D 资产 / 2.5D 分层插画 / 混合」四选项中拍板 2.5D，并加选增强项（表情/说话帧、配饰开关、氛围滤镜）。执行中两个工程决策：配饰提取后 AI 无法保持原位叠加（验证失败），配饰改为与造型包固定绑定；氛围滤镜随五主题联动（夜航无滤镜/晨间暖阳/樱雨樱粉/奶糖焦糖/薄荷清爽）。
+- **造型包体系**：每包 = 一套完整 AI 插画立绘（图生图保持角色一致），含 open/closed/smile/talk 四帧；本版上线三角色默认包（深夜电台/旧书店/城市天台），共 12 张透明 PNG（720 宽，约 17MB，白底抠除管线 `scripts/assets/cutout-stage11.mjs`）；架构支持增量扩包（每角色规划 5 包，其余 12 包后续量产）。
+- **前端**：`avatar2d.ts` Layer2D 引擎（眨眼 2.2-5.8s/呼吸/指针视差/说话联动/主题滤镜/快照合成带缓存）；`avatar.tsx` 重写为「造型小屋」（2.5D 大预览 + 心情平静/微笑 + 造型包卡片 + WX3- 形象码 + 保存）；`main.tsx` 全站头像接入 `renderPackSnapshot`，聊天页头部改 LiveStage 活头像（表情贯穿、busy 时切 talk 帧）；v1 SVG 保留为素材加载失败降级；320 视口适配。
+- **服务端**：sanitizeAvatar v3 分支（角色白名单/packId 正则/表情枚举）；旧 v1/v2 捏捏配置读取时自动迁移默认包。
+- **退役**：avatar3d.ts / avatar-catalog.ts / three 依赖全部移除，主包 268KB→250KB（gzip 89.7→82.8KB），600KB 3D chunk 消失；无 WebGL 依赖全设备兼容。
+
+验证（2026-11-27 13:40-15:00）：
+
+- 本地：`npm test` 66/66（新增 v3 校验 1 例）；`npm run build` 产物 `index-DW5RwoJL.js`（250.11KB / gzip 82.83KB）+ `index-CiaKSviG.css`；tsc 0 错误。
+- dev 真实浏览器全量验收：造型小屋挂载/立绘帧加载/眨眼开闭帧切换（900ms 内捕获）/微笑表情切换帧 src（open↔smile）/视差 translate/保存 PUT v3 落库（SQLite `{"version":3,"characterId":"lin-zhou","packId":"pack1","expression":"smile"}`）/玄关快照 dataURL 生成/聊天页 LiveStage 活头像（显示保存的微笑表情）；期间修复一个真 bug（avatar.tsx 调用 main.tsx 的 api(path,data,method) 签名不符导致 PUT 变 POST 404）；说话联动因 stub 秒回（busy <100ms）采样未捕获，链路与 setExpression 同构、代码审查通过，待真实模型环境观察。
+- 素材质检：15 张生成、两轮修正（林舟短碎发→中长发、耳机挂颈→戴头上）、一次方案否决（配饰独立层提取后 AI 重排为产品图）；抠图验证棋盘格合成（flood-fill 保护云白针织衫不误删、边缘干净）；320 视口修复标题折行与立绘卡高度。
+- 线上：页面 200 引用 `index-DW5RwoJL.js`；素材 `avatar-packs/*.png` 200（抽查 linzhou-open 1,251,459B 与本地一致）；未认证 POST 403；线上 JS 含「造型小屋/WX3-」标记；5 项哈希本地与服务器逐字节一致（index.html `919bebdd…`、JS `6177ede1…`、CSS `ff3adf58…`、features.mjs `1fec27eb…`、素材抽查 `056d4d90…`）。
+- 重启：后端 v3 校验变更，`sudo service wanxin restart` 后 active。
+- 回滚：部署前备份至 `/var/www/_rollback_wanxin_20261127-144738/`（frontend + server + 数据快照），指针 `/var/www/_last_wanxin_backup`；旧前端目录 `wanxin.old` 已清理。
+- 邀请消耗：线上验收仅 curl 未认证路径，未消耗邀请令牌；**token-007 仍为最后一张未用邀请**。
+- 待办：其余 12 个造型包素材量产（管线已就绪，每包 5 张生成+检查）；说话联动待真实模型环境观察；AI 水印按平台合规保留。
+
+> AI生成
