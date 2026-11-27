@@ -230,4 +230,15 @@
 - **邀请消耗**：线上验收仅 curl 未认证路径，未消耗邀请令牌；**token-007 仍为最后一张未用邀请**。
 - **遗留**：线上为 HTTP 直连 IP，浏览器在非安全上下文下禁用麦克风，语音功能待正式域名 HTTPS 转正后才能真正使用（当前会显示明确的等待提示而非误导报错）；说话帧联动待真实模型环境观察；老三样（SSH 密码与 DeepSeek key 轮换、token-007、域名+HTTPS）待办不变。
 
+## 附录 · 网关白名单补丁 + 第二批邀请 + 线上全链路 E2E（第十次半发版，2026-11-27 晚）
+
+stage12 上线后的补丁与运营配套，提交 1ff7698：
+
+- **修复一个真 bug**：`server/usage.mjs` 的 reserve 操作白名单仍为 `['message','preview','moment','letter']`，stage12 新增的 `care`（每日小纸条）与 `memory`（记忆提取）网关操作在受控模式下一律 `operation_denied` 503、被 callModel 静默降级——表现为线上小纸条全部走模板、记忆提取从未真正调模型（本地测试未暴露因 dev 模式不走受控 reserve）。修复：白名单加入 `care`/`memory`；新增回归测试「care/memory 新网关操作在受控模式下可 reserve」（受控 fixture 放宽限额 + 显式 `callsEnabled=1` + reply 替身带 `.remember`，覆盖 care 落账、message→memory fire-and-forget 提取入库、记忆注入断言），**71/71 通过**。
+- **第二批邀请 token-008~017 共 10 张**：`scripts/access-control.mjs generate` 逐张生成（密钥仅存本地 `.temp/invite-batch2/`，不入仓库与聊天），摘要增量合并进服务器 `/var/www/wanxin/private/invites.json`（17 条目）。期间处理一次权限事故：合并脚本以 root 写入导致服务账号启动失败（`api_start_failed`），恢复 ubuntu 属主 600 后服务自动重启恢复；另一教训：502 崩溃窗口内 token-008 兑换写入但响应未达，消耗作废，实发验收从 token-009 起。
+- **服务器部署**：usage.mjs 单文件热修（原版备份 `.bak-s12`），`sudo service wanxin restart` 后 active；前端产物与第十次发版同版（`index-DkJrjqsO.js`）零变更。
+- **线上真实 E2E（token-009 林舟 / token-010 顾川，两新会话全链路走 DeepSeek 真实模型）**：兑换 200 → 发消息（回复质量佳：顾川回复「摄影集在靠里的矮架上…」）→ **记忆提取真实生效**（fact 入库：「她在广告公司做设计，爱看摄影集，加班后想去书店坐坐」）→ **记忆注入生效**（下一轮「今晚很累，随便聊聊」顾川主动提「你想说设计上的，还是别的？」）→ **care 网关真实生成**（小纸条「我去把矮架旁那盏灯调亮一些，你慢慢翻」，operation:care success 落账）。call_attempts 账本确认 message/care/memory 三操作全部 success。
+- **剩余邀请**：token-007 保留 + token-011~017 共 8 张未用；token-008 作废（见上）；token-009/010 已用于 E2E 验收。
+- **遗留**：与第十次发版相同（HTTPS、凭据轮换、语音安全上下文）；另注意本机存在与验证浏览器并行的外部自动化进程（本轮曾重写本地 dist 构建产物，经 git HEAD 重建比对确认内容一致无篡改，但建议错峰）。
+
 > AI生成
