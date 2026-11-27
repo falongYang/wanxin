@@ -213,3 +213,21 @@
 - **邀请消耗**：线上验收仅 curl，未消耗邀请令牌；**token-007 仍为最后一张未用邀请**。
 
 > AI生成
+
+## 附录 · 聊天语音输入专项修复 + 阶段 12 同包携带（第十次发版，2026-11-27 傍晚）
+
+回应 owner 实测反馈（语音按钮卡死在「正在听…」无法退出）的专项修复，提交 55e86d0；**同一构建包含并行会话完成的阶段 12**（角色记忆系统、每日关心、反馈通道、造型包羁绊解锁、PWA，提交 75538b1），语音验证全程跑在 stage12 代码之上（70/70），组合版本已整体验证后一并上线。
+
+- **修复的 5 项语音缺陷**（`src/ui/main.tsx`，只动语音，不触碰发送/队列逻辑——语音仅写 draft，与手动输入共用入口）：
+  1. 卡死无法退出：listening 态下按钮原为 disabled，无任何停止途径 → 按钮变「■ 停止」可点击，手动 stop 随时可用；
+  2. HTTP 非安全上下文误导提示：线上 HTTP 环境浏览器禁用麦克风却报「没有听清」→ `isSecureContext` 检测，明确提示「HTTP 访问浏览器不允许麦克风，正式域名 HTTPS 上线后即可语音」；
+  3. `continuous:false` 说话一停顿识别即断 → 改 `true` 连续识别；
+  4. `interimResults:false` 无实时反馈 → 改 `true`，说话时实时显示中间文字；
+  5. 错误提示一刀切 → 按 error code 分类（not-allowed / no-speech / audio-capture / network）+ 20 秒无响应 watchdog 兜底。
+- **验证**：tsc 0 错误、`npm test` 70/70（含 stage12 新增 4 例）；dev 真实浏览器 Mock SpeechRecognition 注入测试矩阵全过（interim 实时显示、多段 final 累积、停止后按钮/状态复位、四类错误分别提示、HTTP 环境降级提示、不支持语音的浏览器优雅提示），端到端链路语音→draft→纸飞机发送→收到回复实测通过；验证截图归档 `docs/verification/voice-fix/`。
+- **线上**：rsync checksum 增量同步（首用，替代全量 tar：仅传 8 个前端文件 797KB，60 张立绘素材校验和全一致零传输，并顺带清理历次 tar 上传残留的 macOS `._*` 元数据垃圾文件）；12 项产物 SHA-256 本地与服务器逐字节一致（index.html `baed2a0a…`、JS `746a5dd0…`、CSS `7d2b13df…`、sw.js `a6d5730a…`、manifest `bc769c73…`、icon-512 `b3deed53…`、app.mjs `5f56f90d…`、features.mjs `ea6499d1…`、model.mjs `285099c6…`、analytics.mjs `503fe84a…` 等）；后端 4 文件变更，`sudo service wanxin restart` 后 active（PID 1352383）；页面 200 引用 `index-DkJrjqsO.js`；PWA 四件（manifest/sw.js/favicon/icon）200；旧产物已删（SPA 回退返回 883B index.html 壳，磁盘已核实清空）；未认证 POST 403（`/api/` 与 `/wanxin/api/` 双路径）；stage12 新路由 `POST /api/memories`、`POST /api/feedback` 均 403（路由存在且鉴权拦截，旧代码为 404，确认新后端生效）；线上 JS 含语音修复标记（停止/麦克风/isSecureContext）与 stage12 标记（memories/反馈）；公网侧（本机 curl）首页/新 JS/manifest/sw.js/立绘抽查全部 200。
+- **回滚**：部署前备份至 `/var/www/_rollback_wanxin_20261127-172708/`（frontend + server + wanxin.sqlite 数据快照，83MB），指针 `/var/www/_last_wanxin_backup`。
+- **邀请消耗**：线上验收仅 curl 未认证路径，未消耗邀请令牌；**token-007 仍为最后一张未用邀请**。
+- **遗留**：线上为 HTTP 直连 IP，浏览器在非安全上下文下禁用麦克风，语音功能待正式域名 HTTPS 转正后才能真正使用（当前会显示明确的等待提示而非误导报错）；说话帧联动待真实模型环境观察；老三样（SSH 密码与 DeepSeek key 轮换、token-007、域名+HTTPS）待办不变。
+
+> AI生成
