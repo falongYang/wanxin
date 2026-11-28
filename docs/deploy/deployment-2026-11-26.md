@@ -241,4 +241,17 @@ stage12 上线后的补丁与运营配套，提交 1ff7698：
 - **剩余邀请**：token-007 保留 + token-011~017 共 8 张未用；token-008 作废（见上）；token-009/010 已用于 E2E 验收。
 - **遗留**：与第十次发版相同（HTTPS、凭据轮换、语音安全上下文）；另注意本机存在与验证浏览器并行的外部自动化进程（本轮曾重写本地 dist 构建产物，经 git HEAD 重建比对确认内容一致无篡改，但建议错峰）。
 
+## 附录 · 阶段 13 记忆管理完善（第十一次发版，2026-11-28 上午）
+
+stage12 记忆系统的管理面补全与健壮性兜底，提交 e10649d：
+
+- **记忆可删除**：新增 `DELETE /api/memories/:id`（校验归属当前线程，跨线程 404 不泄露存在性）；「我的」页每条记忆右侧「忘掉」小按钮（confirm 确认后删除，列表与徽章即时同步）；「TA 还记得」标题加件数徽章（`· N 件`）。给用户对自己记忆数据的控制感。
+- **小纸条淡入**：玄关 care-note 加 care-in 0.6s 淡入上浮（reduced-motion 全局规则覆盖时静态样式完好）。
+- **崩溃兜底**：新增 `src/ui/error-boundary.tsx`（React ErrorBoundary 包裹 App）——渲染层任何未捕获错误显示夜航风兜底页「信号飘远了一会儿」+ 回到晚信按钮，不再白屏；错误仅留存 console 便于真机排查，不外发。
+- **验证**：`npm test` **72/72**（新增「记忆删除：自己的可删、跨线程 404、删除后列表同步」）；vite preview 实测徽章/删除按钮渲染、删除后 3→2 条即时同步、care-in 动画名生效、产物含 crash-fallback 标记；截图归档 `docs/verification/stage13-design/`。
+- **线上**：前端 rsync checksum 增量同步（index.html/JS/CSS 等 5 项哈希逐字节一致，`index-ByFWS85u.js`）；features.mjs 单文件热修（哈希一致）；`sudo service wanxin restart` 后 active；公网资源抽查全 200。**线上真实 DELETE 验证**：token-010 顾川会话删除记忆返回 `{"ok":true}` 200、列表归零（curl 需带 `content-type: application/json`——受控模式 checkWrite 对所有非 GET 方法校验，前端 api() 封装本就携带、不受影响）。
+- **部署事故与恢复（如实记录）**：本地→服务器 /tmp 的 rsync 因连接中断仅传完部分文件，而服务器端 `rsync -a --delete` 采用该不完整中间目录做源，把 avatar-packs 从 60 张误删至 10 张。**2 分钟内发现并恢复**：重新打包 81MB tar 上传、解包校验 60 文件、覆盖恢复、抽查三张哈希一致（linzhou-pack1-open `17cca839…`、sunwan-pack5-talk `e879dd66…`、guchuan-pack3-smile `1c40a700…`）。**流程改进**：后续素材类同步不再对临时目录使用 `--delete`，改「tar 上传 → 服务器解包校验计数 → 覆盖」流程（本次恢复即按此完成）。
+- **回滚**：部署前备份至 `/var/www/_rollback_wanxin_20261128-062015/`（frontend + server），指针 `/var/www/_last_wanxin_backup`。
+- **邀请消耗**：本轮未消耗新邀请（线上验证复用 token-010 既有会话）；未用邀请 token-007 + token-011~017 共 9 张。
+
 > AI生成
